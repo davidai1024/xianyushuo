@@ -1,0 +1,7 @@
+mlx==0.32.4
+mlx-audio==0.5.9
+mlx-lm==0.32.2
+numpy==2.5.4
+scipy==1.18.1
+soundfile==0.14.0
+transformers==5.19.0

@@ -1,0 +1,45 @@
+咸鱼说第三方说明
+
+本应用使用系统 SwiftUI/AppKit/AVFoundation/CoreAudio 与本地推理运行环境。
+Python 和各已分发 Python 包的许可证保留在 Runtime 与 PythonExtras 的 LICENSE、COPYING、dist-info/licenses 等对应目录中。
+主要组件包括 MLX、MLX-LM、MLX-Audio、NumPy、SciPy、Transformers、Tokenizers、Hugging Face Hub、SoundFile/libSoundFile。
+Sparkle 2.10.0 使用其原始发布框架，框架中的许可证与嵌套帮助程序结构保留。官方文档：https://sparkle-project.org/documentation/
+
+现有本地模型单独存放在用户资料目录，不包含在应用安装包中：
+Qwen3-ASR-1.7B：https://huggingface.co/Qwen/Qwen3-ASR-1.7B
+Qwen3-1.7B：https://huggingface.co/Qwen/Qwen3-1.7B
+Hy-MT2-1.8B：https://huggingface.co/tencent/Hy-MT2-1.8B
+上述官方模型标为Apache License 2.0；转换版本的元数据、词表和各文件仍随本地资源保留。
+
+本应用是独立实现的macOS界面，没有使用OpenWhispr或Sonuvi的品牌、签名身份、云服务或界面源代码。现有个人词表仅在用户授权的本地初始化中读取为独立副本。
+模型处理代码复用了本次用户委托中已实现的本地识别与整理链路。
+
+本地测试版使用专用固定自签名身份，不表示已经通过Apple Developer ID公证。正式对外分发前需要完成正式签名、公证和跨设备安装验证。
+
+
+SpeakMore 整理提示词
+来源：https://github.com/zephyr4123/speakmore
+版本：ecc4f6f3df7bc482195145349f39a82988354001
+复用并适配 src/server/tasks/dictate/polish-prompt.mjs 的文本整理规则与示例；保留三档整理及个人词表、语义保护。
+
+MIT License
+
+Copyright (c) 2026 Zephyr Huang
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,0 +1,41 @@
+import AppKit
+import SwiftUI
+
+/// Mouse selection is not keyboard focus. Do not leave a focus box after clicks.
+final class KeyboardFocusFeedback:ObservableObject {
+    static let shared=KeyboardFocusFeedback()
+    @Published private(set) var visible=false
+    private var monitor:Any?
+    func start(){
+        guard monitor==nil else{return}
+        monitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.leftMouseDown,.rightMouseDown,.otherMouseDown]){[weak self] event in
+            if event.type == .keyDown {
+                if [48,123,124,125,126,115,119].contains(event.keyCode){self?.visible=true}
+            }else{self?.visible=false}
+            return event
+        }
+    }
+    deinit{if let monitor{NSEvent.removeMonitor(monitor)}}
+}
+
+/// Seven days per column; every available horizontal point belongs to the grid.
+struct ActivityGridMetrics {
+    let width:CGFloat
+    let columns=26,rows=7
+    var gap:CGFloat{min(7,max(3,width/95))}
+    var cell:CGFloat{max(1,(width-CGFloat(columns-1)*gap)/CGFloat(columns))}
+    var height:CGFloat{CGFloat(rows)*cell+CGFloat(rows-1)*gap}
+    func frame(_ index:Int)->CGRect{
+        CGRect(x:CGFloat(index/rows)*(cell+gap),y:CGFloat(index%rows)*(cell+gap),width:cell,height:cell)
+    }
+}
+struct ActivityHeatmapLayout:Layout {
+    func sizeThatFits(proposal:ProposedViewSize,subviews:Subviews,cache:inout())->CGSize{
+        let grid=ActivityGridMetrics(width:max(320,proposal.width ?? 600))
+        return CGSize(width:grid.width,height:grid.height)
+    }
+    func placeSubviews(in bounds:CGRect,proposal:ProposedViewSize,subviews:Subviews,cache:inout()){
+        let grid=ActivityGridMetrics(width:bounds.width)
+        for (index,view)in subviews.enumerated(){let rect=grid.frame(index);view.place(at:CGPoint(x:bounds.minX+rect.minX,y:bounds.minY+rect.minY),anchor:.topLeading,proposal:ProposedViewSize(rect.size))}
+    }
+}
