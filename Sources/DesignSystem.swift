@@ -8,9 +8,8 @@ typealias UIState<Value> = SwiftUI.State<Value>
 
 /// Dianyu v4: a single navigation glass surface; all persistent content is flat.
 enum DianyuDesign {
-    static let sidebarWidth:CGFloat=224
-    static let sidebarInset:CGFloat=12
-    static let sidebarRadius:CGFloat=24
+    static let sidebarWidth:CGFloat=196
+    static let sidebarInset:CGFloat=10
     static let contentInset:CGFloat=24
     static let appearanceKey="dianyu.appearance"
     static let accent=Color(red:102/255,green:253/255,blue:254/255)
@@ -152,20 +151,40 @@ final class NavigationGlassHost<Content:View>:NSView {
     init(content:Content){hosting=ClearHostingView(rootView:content);super.init(frame:.zero);hosting.sizingOptions=[];rebuild();observer=NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,object:nil,queue:.main){[weak self]_ in self?.rebuild()}}
     required init?(coder:NSCoder){fatalError("init(coder:) unavailable")}
     override var isOpaque:Bool{false}
+    @available(macOS 27.0,*)
+    override var cornerConfiguration:NSViewCornerConfiguration?{.uniformCorners(radius:.containerConcentric(6))}
+    @available(macOS 27.0,*)
+    override func viewDidChangeEffectiveCornerRadii(){
+        super.viewDidChangeEffectiveCornerRadii()
+        updateCornerRadius()
+    }
     func update(_ content:Content){hosting.rootView=content}
     private func rebuild(){
         hosting.removeFromSuperview();surface?.removeFromSuperview()
         let view:NSView
         if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency{
-            let solid=NSView();solid.wantsLayer=true;solid.layer?.backgroundColor=NSColor.windowBackgroundColor.cgColor;solid.layer?.cornerRadius=24;solid.addSubview(hosting);view=solid
+            let solid=NSView();solid.wantsLayer=true;solid.layer?.backgroundColor=NSColor.windowBackgroundColor.cgColor;solid.addSubview(hosting);view=solid
         }else if #available(macOS 26.0,*){
-            let glass=NSGlassEffectView();glass.style = .regular;glass.cornerRadius=24;glass.contentView=hosting;view=glass
+            let glass=NSGlassEffectView();glass.style = .regular;glass.contentView=hosting;view=glass
         }else{
-            let fallback=NSVisualEffectView();fallback.material = .sidebar;fallback.blendingMode = .behindWindow;fallback.state = .active;fallback.wantsLayer=true;fallback.layer?.cornerRadius=24;fallback.layer?.masksToBounds=true;fallback.addSubview(hosting);view=fallback
+            let fallback=NSVisualEffectView();fallback.material = .sidebar;fallback.blendingMode = .behindWindow;fallback.state = .active;fallback.wantsLayer=true;fallback.addSubview(hosting);view=fallback
         }
         view.frame=bounds;view.autoresizingMask=[.width,.height];addSubview(view);surface=view
         hosting.frame=view.bounds;hosting.autoresizingMask=[.width,.height]
+        updateCornerRadius()
         setAccessibilityIdentifier("floating-navigation-glass")
+    }
+    private func updateCornerRadius(){
+        let radius:CGFloat
+        if #available(macOS 27.0,*),let radii=effectiveCornerRadii{radius=radii.topLeft}
+        else{radius=8}
+        if #available(macOS 26.0,*),let glass=surface as? NSGlassEffectView{
+            if glass.cornerRadius != radius{glass.cornerRadius=radius}
+        }else if let layer=surface?.layer{
+            layer.cornerCurve = .continuous
+            layer.cornerRadius=radius
+            layer.masksToBounds=true
+        }
     }
     override func layout(){super.layout();surface?.frame=bounds;hosting.frame=surface?.bounds ?? bounds}
     deinit{if let observer{NSWorkspace.shared.notificationCenter.removeObserver(observer)}}

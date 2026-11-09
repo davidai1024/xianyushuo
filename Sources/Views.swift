@@ -24,7 +24,8 @@ struct RootView:View {
     }
     var body:some View{
         HStack(spacing:0){
-            NavigationGlass(content:NavigationSidebar(app:app)).equatable().frame(width:196).padding(.leading,10).padding(.trailing,12).padding(.vertical,10)
+            NavigationGlass(content:NavigationSidebar(app:app)).equatable().frame(width:DianyuDesign.sidebarWidth)
+                .padding(.leading,DianyuDesign.sidebarInset).padding(.trailing,12).padding(.vertical,DianyuDesign.sidebarInset)
             VStack(alignment:.leading,spacing:0){
                 VStack(alignment:.leading,spacing:5){Text(title).font(.system(size:28,weight:.semibold));Text(subtitle).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}.frame(maxWidth:.infinity,alignment:.leading).padding(.leading,20).padding(.trailing,24).padding(.top,26).padding(.bottom,page=="个人词表" ? 10:20)
                 if app.capturing && page != "输入"{

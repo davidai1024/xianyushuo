@@ -23,9 +23,22 @@ import SwiftUI
         check(host.buttons.allSatisfy{host.bounds.contains($0.frame) && !$0.isHidden},"Controls remain visible and inside after layout")
         host.restoreButtons();check(original.allSatisfy{!$0.isHidden},"Detaching restores original native visibility")
         host.adoptButtons();check(host.buttons.count==3 && original.allSatisfy{$0.isHidden},"Reattaching gives one visible native control set")
-        let glass=NavigationGlassHost(content:Text("Local test"));glass.frame=NSRect(x:0,y:0,width:224,height:650);window.contentView!.addSubview(glass);glass.layoutSubtreeIfNeeded()
+        let inset=DianyuDesign.sidebarInset
+        let glass=NavigationGlassHost(content:Text("Local test"))
+        glass.frame=NSRect(x:inset,y:inset,width:DianyuDesign.sidebarWidth,height:window.contentView!.bounds.height-2*inset)
+        window.contentView!.addSubview(glass);glass.layoutSubtreeIfNeeded()
         if #available(macOS 26.0,*),!NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency{check(glass.usesSystemGlass,"Real NSGlassEffectView on supported systems")}
         check(glass.hosting.frame.size==glass.bounds.size,"Content follows glass bounds")
+        if #available(macOS 27.0,*){
+            let insetRadius=glass.effectiveCornerRadii!.topLeft
+            glass.frame=NSRect(x:0,y:0,width:DianyuDesign.sidebarWidth,height:window.contentView!.bounds.height)
+            glass.layoutSubtreeIfNeeded()
+            let edgeRadius=glass.effectiveCornerRadii!.topLeft
+            check(insetRadius<edgeRadius,"The navigation rounds more near the window corner")
+            let surface=glass.subviews.first!
+            let surfaceRadius=(surface as? NSGlassEffectView)?.cornerRadius ?? surface.layer?.cornerRadius
+            check(surfaceRadius==edgeRadius,"The rendered surface follows the system corner radius after layout")
+        }
         for (name,color)in [(NSAppearance.Name.darkAqua,DianyuDesign.page),(.aqua,DianyuDesign.page)]{
             let appearance=NSAppearance(named:name)!
             appearance.performAsCurrentDrawingAppearance{let rgb=NSColor(color).usingColorSpace(.sRGB)!;check(rgb.alphaComponent==1,"Content surface is opaque in both appearances")}
