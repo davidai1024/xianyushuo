@@ -99,6 +99,7 @@ enum MicWarmPolicy {
 }
 final class Recorder {
     private var engine:AVAudioEngine?
+    private var deviceCapture:DeviceAudioCapture?
     private var configurationObserver:AudioConfigurationObserver?
     private var file:AVAudioFile?
     private var streaming:StreamingCapture?
@@ -129,7 +130,7 @@ final class Recorder {
     private var startupSilentFrames:Int64=0
     private var usableSeen=false
     private var writerBeforeStart=false
-    var readinessAudit:[String:Any]{lock.withLock{["startup_digital_silence_seconds":Double(startupSilentFrames)/rate,"usable_audio_received":usableSeen,"capture_graph":"input_sink","writer_attached_before_start":writerBeforeStart]}}
+    var readinessAudit:[String:Any]{lock.withLock{["startup_digital_silence_seconds":Double(startupSilentFrames)/rate,"usable_audio_received":usableSeen,"capture_graph":deviceCapture?.graphName ?? "input_sink","writer_attached_before_start":writerBeforeStart]}}
     private var activity:NSObjectProtocol?
     var shouldHandleConfigurationChange:Bool {Date().timeIntervalSince(configuredAt)>1}
     var onLevels:(([Double])->Void)?
@@ -138,7 +139,7 @@ final class Recorder {
     private var lastBufferFrames=0
     var lastBufferTime:Date {lock.lock();defer{lock.unlock()};return receivedAt}
     var stopTailSeconds:Double {lock.withLock{RecordingTail.seconds(bufferFrames:lastBufferFrames,sampleRate:rate)}}
-    var isRunning:Bool {engine?.isRunning == true}
+    var isRunning:Bool {engine?.isRunning == true || deviceCapture?.isRunning == true}
     private var actualDevice:AudioDeviceID?{
         guard let unit=engine?.inputNode.audioUnit else{return nil}
         var result=AudioDeviceID(0),size=UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -154,9 +155,25 @@ final class Recorder {
         guard let chosen=AudioDevices.resolve(uid:uid,preferBuiltIn:preferBuiltIn,choices:choices,defaultDevice:AudioDevices.defaultInput())else{throw AppError.message(uid.isEmpty ? "系统默认麦克风不可用，请选择录音设备。":"所选麦克风已断开，请重新选择设备。")}
         // Resolve the actual default on every start, including a warm-engine reuse.
         let selected=chosen.id
-        if isRunning && selected==currentUID && AudioDevices.routeMatches(actualDevice,chosen:chosen,choices:choices) && Date().timeIntervalSince(lastBufferTime)<0.5 {lock.withLock{writerBeforeStart=false};try beforeStart?(engine!.inputNode.outputFormat(forBus:0));return}
+        if isRunning,selected==currentUID,Date().timeIntervalSince(lastBufferTime)<0.5,
+           deviceCapture != nil || AudioDevices.routeMatches(actualDevice,chosen:chosen,choices:choices),
+           let format=deviceCapture?.format ?? engine?.inputNode.outputFormat(forBus:0) {
+            lock.withLock{writerBeforeStart=false};try beforeStart?(format);return
+        }
         shutdown()
         configuredAt=Date()
+        let bluetooth=AudioDevices.isBluetooth(chosen.device)
+        if bluetooth || chosen.builtIn,let device=AVCaptureDevice(uniqueID:chosen.id),device.hasMediaType(.audio) {
+            // The warm built-in microphone must also stay independent of the
+            // default output when Bluetooth reconnects in the background.
+            let capture=try DeviceAudioCapture(device:device,bluetooth:bluetooth)
+            deviceCapture=capture
+            let owner=try armCapture(format:capture.format,beforeStart:beforeStart)
+            capture.onBuffer={[weak self] buffer in self?.consume(buffer,owner:owner)}
+            capture.start()
+            verifyInput(chosen,format:capture.format,uid:uid,preferBuiltIn:preferBuiltIn)
+            return
+        }
         let engine=AVAudioEngine(),input=engine.inputNode
         guard let unit=input.audioUnit else{throw AppError.message("无法读取麦克风设备。")}
         var device=chosen.device
@@ -175,25 +192,34 @@ final class Recorder {
         // input tap below receives PCM outside that realtime block.
         let sink=AVAudioSinkNode{_,_,_ in noErr};engine.attach(sink)
         engine.connect(input,to:sink,format:format)
-        let first=DispatchSemaphore(value:0)
-        lock.lock();firstBuffer=first;usableAt=Date.distantPast;startupSilentFrames=0;usableSeen=false;lock.unlock()
-        activity=ProcessInfo.processInfo.beginActivity(options:[.userInitiatedAllowingIdleSystemSleep],reason:"咸鱼说正在使用麦克风")
-        rate=format.sampleRate;lock.lock();receivedAt=Date.distantPast;lock.unlock()
-        let owner=lock.withLock{captureGeneration}
+        let owner=try armCapture(format:format,beforeStart:beforeStart)
         input.installTap(onBus:0,bufferSize:1024,format:format) { [weak self] buffer,_ in self?.consume(buffer,owner:owner) }
         tapInstalled=true;self.engine=engine
         configurationObserver=AudioConfigurationObserver(engine:engine){[weak self] in self?.onConfigurationChange?()}
-        // Attach the durable writer before the very first engine callback.
-        // Previously callbacks between start() and begin() were discarded.
-        do{try beforeStart?(format);lock.withLock{writerBeforeStart=beforeStart != nil}}catch{shutdown();throw error}
         engine.prepare()
-        do{try engine.start()}catch{shutdown();throw error};currentUID=selected
+        do{try engine.start()}catch{shutdown();throw error}
         // AVAudioEngine resolves its default input during initialization. Verify
         // after start; do not mutate its duplex HAL unit to follow a default.
         guard AudioDevices.routeMatches(actualDevice,chosen:chosen,choices:choices)else{
             let name=actualDevice.map{AudioDevices.string($0,kAudioObjectPropertyName)} ?? "未知"
             shutdown();throw AppError.message("无法核对实际输入（\(name)）与所选麦克风（\(chosen.name)），已停止录音。")
         }
+        verifyInput(chosen,format:format,uid:uid,preferBuiltIn:preferBuiltIn)
+    }
+    private func armCapture(format:AVAudioFormat,beforeStart:((AVAudioFormat)throws->Void)?)throws->UUID {
+        activity=ProcessInfo.processInfo.beginActivity(options:[.userInitiatedAllowingIdleSystemSleep],reason:"咸鱼说正在使用麦克风")
+        let owner=lock.withLock {
+            firstBuffer=DispatchSemaphore(value:0);usableAt=Date.distantPast;startupSilentFrames=0
+            usableSeen=false;writerBeforeStart=false;receivedAt=Date.distantPast;rate=format.sampleRate
+            return captureGeneration
+        }
+        // The writer must exist before the first PCM callback, including startup silence.
+        do{try beforeStart?(format);lock.withLock{writerBeforeStart=beforeStart != nil}}
+        catch{shutdown();throw error}
+        return owner
+    }
+    private func verifyInput(_ chosen:MicrophoneChoice,format:AVAudioFormat,uid:String,preferBuiltIn:Bool) {
+        currentUID=chosen.id
         inputAudit=["requested_mode":uid.isEmpty ? (preferBuiltIn ? "prefer_built_in":"system_default"):"explicit","actual_name":chosen.name,"actual_uid":chosen.id,"sample_rate":format.sampleRate,"channels":format.channelCount,"route_verified":true]
     }
     func waitForAudio() async ->Bool {
@@ -246,11 +272,12 @@ final class Recorder {
     func shutdown(asynchronously:Bool=false) {
         configuredAt=Date()
         lock.lock();captureGeneration=UUID();file=nil;streaming=nil;firstBuffer=nil;usableAt=Date.distantPast;usableSeen=false;lock.unlock()
-        let retired=engine,hadTap=tapInstalled,activityLease=activity
+        let retired=engine,retiredCapture=deviceCapture,hadTap=tapInstalled,activityLease=activity
         configurationObserver=nil
-        engine=nil;tapInstalled=false;activity=nil;currentUID="";inputAudit=[:]
-        guard retired != nil || activityLease != nil else{return}
+        engine=nil;deviceCapture=nil;tapInstalled=false;activity=nil;currentUID="";inputAudit=[:]
+        guard retired != nil || retiredCapture != nil || activityLease != nil else{return}
         let release={
+            retiredCapture?.stop()
             if hadTap{retired?.inputNode.removeTap(onBus:0)}
             retired?.stop()
             if let activityLease{ProcessInfo.processInfo.endActivity(activityLease)}

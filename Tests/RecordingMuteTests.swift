@@ -2,6 +2,8 @@ import Foundation
 
 final class FakeOutputAudio:OutputAudioBackend {
     var profileNames:[String:String]=[:]
+    var preflightOutputs:[String]=[]
+    func bluetoothOutputUIDs()->[String]{preflightOutputs}
     func profile(_ uid:String)->String?{profileNames[uid]}
     var selected:String?="a",available:Set<String>=["a","b"]
     var definitions=["a":[OutputControl(uid:"a",kind:"mute",channel:0,original:0)],"b":[OutputControl(uid:"b",kind:"mute",channel:0,original:0)]]
@@ -172,6 +174,8 @@ final class FakeOutputAudio:OutputAudioBackend {
         heldController.end(owner:heldOwner)
         check(held.values["a.mute.0"]==1,"Post-release Bluetooth settling remains quiet")
         clock=clock.addingTimeInterval(0.3);heldController.routeChanged()
+        check(held.values["a.mute.0"]==1,"Starting on Bluetooth also waits for stereo before opening playback")
+        clock=clock.addingTimeInterval(4);heldController.routeChanged()
         check(held.values["a.mute.0"]==0,"An external mic holder cannot strand the stable capture profile on mute")
         stereoProfile(held,0.72,1);heldController.routeChanged()
         check(held.values["a.mute.0"]==1,"A newly switching playback route is not restored prematurely")
@@ -245,6 +249,25 @@ final class FakeOutputAudio:OutputAudioBackend {
         let unmutedOwner=profileController.prepareForDeviceRelease()!;stereoProfile(profile,0.12,1)
         profileController.end(owner:unmutedOwner);settle(profileController)
         check(profile.values["a.mute.0"]==0,"Explicit manual unmute survives a previously-muted playback profile")
+        let joined=FakeOutputAudio(),joinedController=make("joined-bluetooth",joined)
+        joined.preflightOutputs=["a"];joined.selected="b";stereoProfile(joined,0.46)
+        check(joinedController.begin(enabled:true,watchdog:false) && joined.values["a.mute.0"]==0,"An unused Bluetooth output is snapshotted without writes")
+        captureProfile(joined);joined.selected="a";joinedController.routeChanged()
+        check(joined.values["b.mute.0"]==0 && joined.values["a.mute.0"]==1,"Mid-recording switch mutes the Bluetooth call profile")
+        let joinedOwner=joinedController.prepareForDeviceRelease()!
+        joinedController.end(owner:joinedOwner)
+        clock=clock.addingTimeInterval(2.3);joinedController.routeChanged()
+        check(joined.values["a.mute.0"]==1,"Playback cannot leak in the call profile while waiting for stereo")
+        stereoProfile(joined,0.13,1);joinedController.routeChanged();settle(joinedController)
+        check(joined.values["a.volume.1"]==0.46 && joined.values["a.volume.2"]==0.46 && joined.values["a.mute.0"]==0,"Late-selected playback restores its own original stereo gain before unmuting")
+        joined.selected="b";stereoProfile(joined,0.46);_=joinedController.begin(enabled:true,watchdog:false)
+        captureProfile(joined);joined.values["a.mute.0"]=1
+        joined.selected="a";joinedController.routeChanged()
+        joinedController.end(owner:joinedController.prepareForDeviceRelease())
+        clock=clock.addingTimeInterval(0.6);joinedController.routeChanged()
+        check(joined.values["a.mute.0"]==1,"Back-to-back recordings adopt the previous owned mute without an early unmute")
+        clock=clock.addingTimeInterval(4.5);joinedController.routeChanged()
+        check(joined.values["a.mute.0"]==0,"A microphone held open by another client cannot strand the recording mute")
         let offline=FakeOutputAudio(),offlineController=make("offline-other",offline)
         _=offlineController.begin(enabled:true,watchdog:false);offline.available.remove("a");offlineController.end();offline.selected="b"
         check(offlineController.begin(enabled:true,watchdog:false) && offline.values["b.mute.0"]==1,"Offline old headset recovery does not disable a different wired output")

@@ -11,6 +11,7 @@ struct OutputControl:Codable,Equatable {
     var muted:Double{kind=="mute" ? 1:0}
 }
 protocol OutputAudioBackend {
+    func bluetoothOutputUIDs()->[String]
     func profile(_ uid:String)->String?
     func defaultUID()->String?
     func controls(_ uid:String)->[OutputControl]
@@ -18,7 +19,7 @@ protocol OutputAudioBackend {
     func read(_ control:OutputControl)->Double?
     func write(_ control:OutputControl,_ value:Double)->Bool
 }
-extension OutputAudioBackend {func profile(_ uid:String)->String?{nil};func volumeControls(_ uid:String)->[OutputControl]{[]}}
+extension OutputAudioBackend {func bluetoothOutputUIDs()->[String]{[]};func profile(_ uid:String)->String?{nil};func volumeControls(_ uid:String)->[OutputControl]{[]}}
 final class CoreOutputAudio:OutputAudioBackend {
     private func address(_ control:OutputControl)->AudioObjectPropertyAddress{
         AudioObjectPropertyAddress(mSelector:control.kind=="mute" ? kAudioDevicePropertyMute:(control.kind=="virtualVolume" ? kAudioHardwareServiceDeviceProperty_VirtualMainVolume:control.kind=="balance" ? kAudioHardwareServiceDeviceProperty_VirtualMainBalance:kAudioDevicePropertyVolumeScalar),mScope:kAudioDevicePropertyScopeOutput,mElement:control.channel)
@@ -28,12 +29,19 @@ final class CoreOutputAudio:OutputAudioBackend {
         var value:Unmanaged<CFString>?,size=UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         return AudioObjectGetPropertyData(device,&a,0,nil,&size,&value)==noErr ? value.map{$0.takeRetainedValue() as String}:nil
     }
-    private func device(_ uid:String)->AudioDeviceID?{
+    private func devices()->[AudioDeviceID]{
         var a=AudioObjectPropertyAddress(mSelector:kAudioHardwarePropertyDevices,mScope:kAudioObjectPropertyScopeGlobal,mElement:kAudioObjectPropertyElementMain),size:UInt32=0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject),&a,0,nil,&size)==noErr else{return nil}
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject),&a,0,nil,&size)==noErr else{return []}
         var values=[AudioDeviceID](repeating:0,count:Int(size)/MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),&a,0,nil,&size,&values)==noErr else{return nil}
-        return values.first{self.uid($0)==uid}
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),&a,0,nil,&size,&values)==noErr else{return []}
+        return values
+    }
+    private func device(_ uid:String)->AudioDeviceID?{devices().first{self.uid($0)==uid}}
+    func bluetoothOutputUIDs()->[String]{
+        devices().filter(isBluetooth).compactMap{device in
+            guard let uid=uid(device),control(uid,"virtualVolume",0) != nil else{return nil}
+            return uid
+        }
     }
     func defaultDeviceID()->AudioDeviceID?{
         var a=AudioObjectPropertyAddress(mSelector:kAudioHardwarePropertyDefaultOutputDevice,mScope:kAudioObjectPropertyScopeGlobal,mElement:kAudioObjectPropertyElementMain),d=AudioDeviceID(0),size=UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -55,11 +63,14 @@ final class CoreOutputAudio:OutputAudioBackend {
         let code=AudioObjectIsPropertySettable(d,&a,&settable)
         guard code==noErr,settable.boolValue,let original=read(c)else{return nil};c.original=original;return c
     }
-    func profile(_ uid:String)->String?{
-        guard let d=device(uid)else{return nil}
+    private func isBluetooth(_ device:AudioDeviceID)->Bool{
         var a=AudioObjectPropertyAddress(mSelector:kAudioDevicePropertyTransportType,mScope:kAudioObjectPropertyScopeGlobal,mElement:kAudioObjectPropertyElementMain),transport:UInt32=0,size:UInt32=4
-        guard AudioObjectGetPropertyData(d,&a,0,nil,&size,&transport)==noErr,transport==kAudioDeviceTransportTypeBluetooth || transport==kAudioDeviceTransportTypeBluetoothLE else{return nil}
-        a.mSelector=kAudioDevicePropertyNominalSampleRate;var rate:Double=0;size=8
+        return AudioObjectGetPropertyData(device,&a,0,nil,&size,&transport)==noErr &&
+            (transport==kAudioDeviceTransportTypeBluetooth || transport==kAudioDeviceTransportTypeBluetoothLE)
+    }
+    func profile(_ uid:String)->String?{
+        guard let d=device(uid),isBluetooth(d)else{return nil}
+        var a=AudioObjectPropertyAddress(mSelector:kAudioDevicePropertyNominalSampleRate,mScope:kAudioObjectPropertyScopeGlobal,mElement:kAudioObjectPropertyElementMain),rate:Double=0,size:UInt32=8
         guard AudioObjectGetPropertyData(d,&a,0,nil,&size,&rate)==noErr else{return nil}
         let channels=volumeControls(uid).map(\.channel),signature=channels.contains(0) ? [UInt32(0)]:channels
         return String(Int(rate))+":"+signature.map{String($0)}.joined(separator:",")
@@ -96,6 +107,7 @@ struct OutputProfileLease:Codable,Equatable {
     var uid:String;var originalProfile:String;var original:[OutputControl]
     var captureProfile:String?;var capture:[OutputControl]=[];var expectedVolumes:[OutputControl]=[]
     var userChanged=false;var unmutedByUser:Bool?;var playbackRestored=false
+    var joinedDuringCapture:Bool?
     var captureRestored:Bool?
     var captureRecoveryDeadline:Double?
 }
@@ -113,6 +125,7 @@ final class RecordingMuteController {
     private var guardOwner=""
     private var useWatchdog=true
     private var currentUID:String?
+    private var playbackBeforeCapture:[String:OutputProfileLease]=[:]
     private var deferredRelease=false
     private var muteSuppressed=false
     private var modeTimer:Timer?
@@ -184,6 +197,17 @@ final class RecordingMuteController {
         active=true;deferredRelease=false;muteSuppressed=false;currentUID=nil;retry?.cancel();retry=nil
         journal=OutputMuteJournal(owner:UUID().uuidString,entries:outstanding);journal.profiles=oldProfiles.isEmpty ? nil:oldProfiles
         journal.deferredCapture=deferredCapture;useWatchdog=watchdog
+        // Read only. A Bluetooth output selected mid-recording may already be
+        // in call mode by then, even though it was not the starting output.
+        playbackBeforeCapture=[:]
+        for uid in backend.bluetoothOutputUIDs(){
+            guard let profile=backend.profile(uid)else{continue}
+            let controls=backend.controls(uid)
+            guard !controls.isEmpty else{continue}
+            let original=unique(controls+backend.volumeControls(uid))
+            guard backend.profile(uid)==profile else{continue}
+            playbackBeforeCapture[uid]=OutputProfileLease(uid:uid,originalProfile:profile,original:original)
+        }
         do{try persist()}catch{active=false;onStatus?("无法保存声音恢复状态，本次未静音。");return false}
         let result=muteDefault()
         if watchdog,!journal.entries.isEmpty{startGuard()}
@@ -198,11 +222,24 @@ final class RecordingMuteController {
         muteSuppressed=false
         rememberProfile(uid)
         let changes=controls.filter{abs($0.original-$0.muted)>0.0001}
-        guard !changes.isEmpty else{onStatus?("输出原本已静音，保持原状态。");return true}
+        let leaseIndex=journal.profiles?.firstIndex{$0.uid==uid && $0.joinedDuringCapture==true}
+        let previousCapture=(journal.deferredCapture ?? []).first{
+            $0.uid==uid && $0.captureProfile==backend.profile(uid) &&
+                now().timeIntervalSince1970<($0.captureRecoveryDeadline ?? 0)
+        }
+        // A just-finished recording can still own the silent call controls.
+        // Adopt that lease before the previous deferred restore can open them.
+        let inheritsMute=changes.isEmpty && previousCapture != nil && leaseIndex != nil
+        guard !changes.isEmpty || inheritsMute else{onStatus?("输出原本已静音，保持原状态。");return true}
+        if inheritsMute,let previousCapture,let leaseIndex{
+            journal.profiles?[leaseIndex].capture=previousCapture.capture
+        }
         // Some devices couple the mute bit to their scalar volume. Persist both
         // BEFORE the first write, including across a Bluetooth profile change.
         let previousEntries=journal.entries
-        for control in changes+backend.volumeControls(uid).filter({$0.original>0.0001}){
+        let lease=journal.profiles?.first{$0.uid==uid && $0.joinedDuringCapture==true}
+        let restoreControls=lease?.original ?? changes+backend.volumeControls(uid).filter{$0.original>0.0001}
+        for control in restoreControls{
             if !journal.entries.contains(where:{$0.uid==control.uid && $0.kind==control.kind && $0.channel==control.channel}){journal.entries.append(control)}
         }
         do{try persist()}catch{active=false;journal.entries=previousEntries;beginSettlement();restore(excluding:nil);onStatus?("无法保存声音恢复状态，本次未静音。");return false}
@@ -211,6 +248,10 @@ final class RecordingMuteController {
             guard backend.write(control,control.muted)else{
                 active=false;beginSettlement();restore(excluding:nil);onStatus?("静音写入失败，正在核验并恢复声音。");return false
             }
+        }
+        if lease != nil,let index=journal.profiles?.firstIndex(where:{$0.uid==uid}){
+            journal.profiles?[index].expectedVolumes=backend.volumeControls(uid)
+            try? persist()
         }
         let confirmed=changes.allSatisfy{c in backend.read(c).map{abs($0-c.muted)<0.0001} ?? false}
         onStatus?(confirmed ? "录音时已静音，结束后恢复原状态。":"静音请求已发送，设备正在切换；原音量已保存。")
@@ -223,8 +264,13 @@ final class RecordingMuteController {
     }
     private func rememberProfile(_ uid:String){
         guard let profile=backend.profile(uid),!(journal.profiles ?? []).contains(where:{$0.uid==uid})else{return}
-        let original=unique(backend.controls(uid)+backend.volumeControls(uid))
-        journal.profiles=(journal.profiles ?? [])+[OutputProfileLease(uid:uid,originalProfile:profile,original:original)]
+        let current=unique(backend.controls(uid)+backend.volumeControls(uid))
+        var lease=OutputProfileLease(uid:uid,originalProfile:profile,original:current)
+        if var playback=playbackBeforeCapture[uid],playback.originalProfile != profile{
+            playback.captureProfile=profile;playback.capture=current;playback.joinedDuringCapture=true
+            lease=playback
+        }
+        journal.profiles=(journal.profiles ?? [])+[lease]
     }
     /// Called after real input buffers arrive: Bluetooth can replace its output
     /// controls without changing UID when capture starts.
@@ -355,6 +401,8 @@ final class RecordingMuteController {
         var retryNeeded=false
         journal.deferredCapture=(journal.deferredCapture ?? []).filter{lease in
             guard time.timeIntervalSince1970<(lease.captureRecoveryDeadline ?? 0)else{return false}
+            // A newer live or settling lease has priority over this old profile.
+            guard !journal.entries.contains(where:{$0.uid==lease.uid})else{return true}
             guard lease.uid==current,let profile=backend.profile(lease.uid)else{profileObserved.removeValue(forKey:lease.uid);return true}
             if profileObserved[lease.uid]?.0 != profile{profileObserved[lease.uid]=(profile,time)}
             guard profile==lease.captureProfile else{return true}
@@ -390,7 +438,10 @@ final class RecordingMuteController {
                     // Another app may keep the capture profile alive. Restore its
                     // mute only after our engine is gone and the route is stable;
                     // retain the original playback snapshot for its later return.
-                    if journal.restoreAfter != nil,currentProfile==lease.captureProfile,lease.captureRestored != true{
+                    // Hold our mute while the headset returns to playback.
+                    // Fall back if another client keeps the microphone open.
+                    if let after=journal.restoreAfter,now().timeIntervalSince1970>=after+4,
+                       currentProfile==lease.captureProfile,lease.captureRestored != true{
                         lease.captureRestored=restoreCapture(lease);profiles[index]=lease;journal.profiles=profiles;try? persist()
                     }
                     pending.append(c);continue
