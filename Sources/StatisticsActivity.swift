@@ -3,7 +3,7 @@ import Foundation
 /// Calendar days, not 24-hour offsets: keep weekday rows correct across DST.
 struct StatisticsActivity {
     enum DayKind:Equatable {case beforeHistory,empty,activity(Int),future}
-    struct Day:Identifiable {
+    struct Day:Identifiable,Equatable {
         let index:Int,date:Date,count:Int,kind:DayKind
         var id:Int{index}
         var level:Int{switch count{case ...0:return 0;case 1...2:return 1;case 3...5:return 2;case 6...9:return 3;default:return 4}}

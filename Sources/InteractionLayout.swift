@@ -30,13 +30,3 @@ struct ActivityGridMetrics {
         CGRect(x:CGFloat(index/rows)*(cell+gap),y:CGFloat(index%rows)*(cell+gap),width:cell,height:cell)
     }
 }
-struct ActivityHeatmapLayout:Layout {
-    func sizeThatFits(proposal:ProposedViewSize,subviews:Subviews,cache:inout())->CGSize{
-        let grid=ActivityGridMetrics(width:max(320,proposal.width ?? 600))
-        return CGSize(width:grid.width,height:grid.height)
-    }
-    func placeSubviews(in bounds:CGRect,proposal:ProposedViewSize,subviews:Subviews,cache:inout()){
-        let grid=ActivityGridMetrics(width:bounds.width)
-        for (index,view)in subviews.enumerated(){let rect=grid.frame(index);view.place(at:CGPoint(x:bounds.minX+rect.minX,y:bounds.minY+rect.minY),anchor:.topLeading,proposal:ProposedViewSize(rect.size))}
-    }
-}

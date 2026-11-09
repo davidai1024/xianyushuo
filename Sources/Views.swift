@@ -13,11 +13,14 @@ private struct NavigationHover:ButtonStyle {
     func makeBody(configuration:Configuration)->some View{configuration.label.contentShape(Rectangle()).background(Color.primary.opacity(configuration.isPressed ? 0.11:hover ? 0.05:0),in:RoundedRectangle(cornerRadius:10)).overlay{if focused && focusFeedback.visible{RoundedRectangle(cornerRadius:10).strokeBorder(DianyuDesign.focus,lineWidth:2).allowsHitTesting(false)}}.onHover{hover=$0}}
 }
 struct RootView:View {
-    @ObservedObject var app:AppState
+    let app:AppState
     @ObservedObject private var navigation:PageSelection
     @AppStorage(DianyuDesign.appearanceKey) private var appearance="system"
+    @UIState private var capturePhase:String?
+    @UIState private var storageError=""
     init(app:AppState){self.app=app;navigation=app.navigation}
     private var page:String{navigation.value}
+    private var settingsSection:String?{SettingsWorkspace.sections.contains(page) ? page:nil}
     private var title:String{page=="设置" ? "通用":page=="模型资源" ? "模型":page}
     private var subtitle:String{
         switch page{case "设置":return "外观、输出与本地记录。";case "录音":return "选择麦克风，让每次起录更从容。";case "快捷键":return "按你的习惯，随时开始听写与翻译。";case "权限":return "管理录音与跨应用填入所需的系统授权。";case "关于":return "版本、更新与本地隐私。";case "模型资源":return "识别、整理与翻译，全部在这台 Mac 上完成。";case "统计":return "看看你用声音写下了多少内容。";case "历史":return "原音、原文与每一次结果，都可以找回。";case "个人词表":return "让常用词参与每一次识别。";default:return "在本机识别、整理，再写入当前应用。"}
@@ -28,20 +31,26 @@ struct RootView:View {
                 .padding(.leading,DianyuDesign.sidebarInset).padding(.trailing,12).padding(.vertical,DianyuDesign.sidebarInset)
             VStack(alignment:.leading,spacing:0){
                 VStack(alignment:.leading,spacing:5){Text(title).font(.system(size:28,weight:.semibold));Text(subtitle).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}.frame(maxWidth:.infinity,alignment:.leading).padding(.leading,20).padding(.trailing,24).padding(.top,26).padding(.bottom,page=="个人词表" ? 10:20)
-                if app.capturing && page != "输入"{
-                    HStack{Label(app.phase=="preparing" ? "麦克风准备中，关闭窗口会取消准备。":"录音继续进行，关闭窗口会结束并保存。",systemImage:"mic.fill").font(.system(size:12));Spacer();Button("返回录音"){app.page="输入"};Button(app.phase=="preparing" ? "取消准备":"结束并保存"){if app.phase=="preparing"{app.cancel()}else{app.finish()}}}.foregroundStyle(DianyuDesign.secondary).padding(.leading,20).padding(.trailing,24).padding(.bottom,14)
+                if let capturePhase,page != "输入"{
+                    HStack{Label(capturePhase=="preparing" ? "麦克风准备中，关闭窗口会取消准备。":"录音继续进行，关闭窗口会结束并保存。",systemImage:"mic.fill").font(.system(size:12));Spacer();Button("返回录音"){app.page="输入"};Button(capturePhase=="preparing" ? "取消准备":"结束并保存"){if app.phase=="preparing"{app.cancel()}else{app.finish()}}}.foregroundStyle(DianyuDesign.secondary).padding(.leading,20).padding(.trailing,24).padding(.bottom,14)
                 }
-                if !app.store.storageError.isEmpty{Text(app.store.storageError).foregroundStyle(.orange).padding(.leading,20).padding(.trailing,24).padding(.bottom,12)}
-                Group{switch page{
-                case "历史":HistoryPage(app:app)
-                case "个人词表":VocabularyPage(app:app)
-                case "统计":StatisticsPage(app:app)
-                case "设置","录音","快捷键","权限","关于","模型资源":SettingsWorkspace(app:app,section:page)
-                default:InputPage(app:app)
-                }}.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
+                if !storageError.isEmpty{Text(storageError).foregroundStyle(.orange).padding(.leading,20).padding(.trailing,24).padding(.bottom,12)}
+                ZStack(alignment:.topLeading){
+                    SettingsWorkspace(app:app,section:settingsSection)
+                    if settingsSection==nil{
+                        switch page{
+                        case "历史":HistoryPage(app:app)
+                        case "个人词表":VocabularyPage(app:app)
+                        case "统计":StatisticsPage(store:app.store)
+                        default:InputPage(app:app)
+                        }
+                    }
+                }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
             }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(DianyuDesign.page)
         }.background(DianyuDesign.page).frame(minWidth:920,minHeight:640).ignoresSafeArea().tint(DianyuDesign.accent)
             .foregroundStyle(DianyuDesign.primary).buttonStyle(FlatButtonStyle()).preferredColorScheme(appearance=="dark" ? .dark:appearance=="light" ? .light:nil)
+            .onReceive(app.$phase.map{["preparing","recording"].contains($0) ? $0:nil}.removeDuplicates()){capturePhase=$0}
+            .onReceive(app.store.$storageError.removeDuplicates()){storageError=$0}
             .onAppear{DianyuDesign.applyAppearance();KeyboardFocusFeedback.shared.start()}.onChange(of:appearance){_ in DianyuDesign.applyAppearance()}
     }
 }
@@ -63,13 +72,10 @@ private struct NavigationSidebar:View,Equatable {
             NativeWindowControls().frame(height:30).padding(.bottom,12)
             HStack(spacing:10){BrandMark(size:36);VStack(alignment:.leading,spacing:4){Text("咸鱼说").font(.system(size:19,weight:.bold));Text("把想法，说出来。").font(.system(size:11)).foregroundStyle(DianyuDesign.onGlassMuted)};Spacer(minLength:0)}.padding(.horizontal,10).padding(.bottom,22)
             SearchField(placeholder:"搜索页面",text:$query).padding(.bottom,12)
-            ScrollView{
-                VStack(alignment:.leading,spacing:4){
-                    navigationGroup("工作区",entries:workspace)
-                    navigationGroup("偏好设置",entries:preferences)
-                    if !(workspace+preferences).contains(where:matches){Text("没有匹配的页面").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).padding(12)}
-                }.padding(.bottom,12)
-            }.scrollIndicators(.hidden)
+            ViewThatFits(in:.vertical){
+                navigationGroups
+                ScrollView{navigationGroups}.scrollIndicators(.hidden)
+            }.frame(maxHeight:.infinity,alignment:.topLeading)
             Rectangle().fill(DianyuDesign.line).frame(height:1).padding(.bottom,14)
             HStack{Text("版本 \(DianyuDesign.version)");Spacer();HStack(spacing:5){Circle().fill(failed ? Color.orange:DianyuDesign.accent.opacity(0.65)).frame(width:4,height:4);Text(busy ? "处理中":"完全本地")}}.font(.system(size:11)).foregroundStyle(DianyuDesign.onGlassMuted).padding(.horizontal,8).padding(.bottom,8)
         }.padding(12).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).ignoresSafeArea()
@@ -78,6 +84,13 @@ private struct NavigationSidebar:View,Equatable {
             .onReceive(app.$phase.combineLatest(app.$resourcesBusy){phase,resourcesBusy in
                 resourcesBusy || ["preparing","recording","working"].contains(phase)
             }.removeDuplicates()){busy=$0}
+    }
+    private var navigationGroups:some View{
+        VStack(alignment:.leading,spacing:4){
+            navigationGroup("工作区",entries:workspace)
+            navigationGroup("偏好设置",entries:preferences)
+            if !(workspace+preferences).contains(where:matches){Text("没有匹配的页面").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).padding(12)}
+        }.padding(.bottom,12)
     }
     private func matches(_ e:NavigationEntry)->Bool{query.isEmpty || e.title.localizedCaseInsensitiveContains(query)}
     @ViewBuilder private func navigationGroup(_ title:String,entries:[NavigationEntry])->some View{
@@ -97,7 +110,7 @@ struct InputPage:View {
         ScrollView{
             VStack(alignment:.leading,spacing:22){
                 VStack(alignment:.leading,spacing:20){
-                    HStack{Text("语音输入").font(.system(size:12,weight:.semibold)).foregroundStyle(DianyuDesign.secondary);Spacer();HStack(spacing:6){Circle().fill(app.busy ? DianyuDesign.accent:Color.green.opacity(0.7)).frame(width:5,height:5);Text(app.busy ? app.stage:app.engineStatus).lineLimit(1);if app.phase=="recording"{Text(String(format:"%02d:%02d",Int(app.elapsed)/60,Int(app.elapsed)%60)).monospacedDigit()}}.font(.system(size:11)).foregroundStyle(DianyuDesign.secondary)}
+                    HStack{Text("语音输入").font(.system(size:12,weight:.semibold)).foregroundStyle(DianyuDesign.secondary);Spacer();HStack(spacing:6){Circle().fill(app.busy ? DianyuDesign.accent:Color.green.opacity(0.7)).frame(width:5,height:5);Text(app.busy ? app.stage:app.engineStatus).lineLimit(1);if app.phase=="recording"{recordingClock}}.font(.system(size:11)).foregroundStyle(DianyuDesign.secondary)}
                     HStack(spacing:28){
                         VStack(alignment:.leading,spacing:8){Text(app.phase=="recording" ? "正在听你说":app.phase=="preparing" ? "正在准备麦克风":app.phase=="working" ? "正在本机处理":"随时开始一段听写").font(.system(size:21,weight:.semibold));Text(app.phase=="recording" ? "再按快捷键结束，Esc 取消。":app.phase=="preparing" ? "等待麦克风准备，可随时取消。":"用自己的话，把想法自然说出来。").font(.system(size:13)).foregroundStyle(DianyuDesign.secondary)}.frame(maxWidth:.infinity,alignment:.leading)
                         DotMatrix(source:app.meter,phase:app.phase).frame(width:230,height:54)
@@ -127,6 +140,12 @@ struct InputPage:View {
                 }.font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).padding(.vertical,12)
             }.padding(.leading,20).padding(.trailing,24).padding(.bottom,28)
         }.onChange(of:app.store.preferences.cleanup){_ in app.store.savePreferences()}
+    }
+    private var recordingClock:some View{
+        TimelineView(.periodic(from:app.recordingStartedAt,by:1)){context in
+            let seconds=max(0,Int(context.date.timeIntervalSince(app.recordingStartedAt)))
+            Text(String(format:"%02d:%02d",seconds/60,seconds%60)).monospacedDigit()
+        }
     }
     private var notice:some View{
         let needsAttention=app.phase=="error" || app.deliveryState=="unverified" || app.notice.contains("未自动填入")
@@ -184,9 +203,11 @@ struct HistoryPage:View {
     @ObservedObject private var focusFeedback=KeyboardFocusFeedback.shared
     var selected:UUID?{get{UUID(uuidString:selectionID)}nonmutating set{selectionID=newValue?.uuidString ?? ""}}
     var filtered:[SessionRecord]{app.store.sessions.filter{query.isEmpty || ($0.raw+$0.output+$0.error).localizedCaseInsensitiveContains(query)}.sorted{$0.created>$1.created}}
-    var days:[Date]{Array(Set(filtered.map{Calendar.current.startOfDay(for:$0.created)})).sorted(by:>)}
     var scrollPosition:Binding<UUID?>{Binding(get:{UUID(uuidString:scrollID)},set:{scrollID=$0?.uuidString ?? ""})}
     var body:some View{
+        let filtered=filtered
+        let calendar=Calendar.current
+        let byDay=Dictionary(grouping:filtered){calendar.startOfDay(for:$0.created)}
         GeometryReader{layout in
             HStack(spacing:0){
                 VStack(alignment:.leading,spacing:14){
@@ -196,9 +217,9 @@ struct HistoryPage:View {
                         ScrollViewReader{proxy in
                             ScrollView{
                                 LazyVStack(alignment:.leading,spacing:6){
-                                    ForEach(days,id:\.self){day in
+                                    ForEach(byDay.keys.sorted(by:>),id:\.self){day in
                                         Text(dayTitle(day)).font(.system(size:11,weight:.medium)).foregroundStyle(DianyuDesign.tertiary).padding(.horizontal,10).padding(.top,12)
-                                        ForEach(filtered.filter{Calendar.current.isDate($0.created,inSameDayAs:day)}){r in
+                                        ForEach(byDay[day] ?? []){r in
                                             Button{selected=r.id}label:{
                                                 VStack(alignment:.leading,spacing:8){
                                                     Text(r.output.isEmpty ? r.raw.isEmpty ? "待恢复的录音":r.raw:r.output).font(.system(size:12.5,weight:.medium)).lineLimit(2).frame(maxWidth:.infinity,alignment:.leading)
@@ -254,8 +275,9 @@ struct VocabularyPage:View {
     var filtered:[VocabularyEntry]{app.store.vocabulary.filter{(query.isEmpty || VocabularyRules.key($0.word).contains(VocabularyRules.key(query))) && (filter=="全部" || (filter=="已启用" ? $0.enabled:!$0.enabled))}}
     func save(_ values:[VocabularyEntry]){do{try app.store.saveVocabulary(values);message="已保存，下一次任务立即生效。"}catch{message=error.localizedDescription}}
     var body:some View{
+        let filtered=filtered
         ScrollView{
-            VStack(alignment:.leading,spacing:12){
+            LazyVStack(alignment:.leading,spacing:12){
                 if let suggestion=app.correctionSuggestion{
                     PreferenceCard(title:"改字建议",detail:"检测到本次填入后的手动修正，由你决定是否记住。"){
                         PreferenceRow(title:suggestion.word,detail:"加入后，从下一次录音开始提供词语提示。",symbol:"text.badge.plus"){
@@ -272,7 +294,7 @@ struct VocabularyPage:View {
                     Label(message.isEmpty ? "识别时提供词语提示，整理时保留正确写法，不会强制替换。":message,systemImage:"info.circle").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).textSelection(.enabled)
                 }.padding(12).background(DianyuDesign.feature,in:RoundedRectangle(cornerRadius:15))
                 HStack{Text("我的词条").font(.system(size:14,weight:.semibold));Text("\(app.store.vocabulary.count)").font(.system(size:11)).foregroundStyle(DianyuDesign.secondary).padding(.horizontal,7).padding(.vertical,3).background(DianyuDesign.control,in:RoundedRectangle(cornerRadius:5));Spacer();Button{importWords()}label:{Label("导入词表",systemImage:"square.and.arrow.down")};Button{exportWords()}label:{Label("导出词表",systemImage:"square.and.arrow.up")}}.disabled(app.busy)
-                VStack(spacing:0){
+                LazyVStack(spacing:0){
                     HStack(spacing:16){SearchField(placeholder:"搜索词条",text:$query,focusRequest:$focusSearch).frame(maxWidth:330);Text("显示\(filtered.count)项").font(.system(size:11)).foregroundStyle(DianyuDesign.secondary);Spacer(minLength:0);FlatSegmented(label:"筛选词条",selection:$filter,options:["全部","已启用","已停用"].map{($0,$0)}).frame(width:234)}.padding(.horizontal,16).padding(.vertical,10)
                     HStack{Text("词条");Spacer();Text("参与识别").frame(width:66);Text("操作").frame(width:74)}.font(.system(size:11)).foregroundStyle(DianyuDesign.tertiary).padding(.horizontal,18).padding(.bottom,12)
                     Rectangle().fill(DianyuDesign.line).frame(height:1)
@@ -321,19 +343,22 @@ struct VocabularyPage:View {
     func exportWords(){let panel=NSSavePanel();panel.nameFieldStringValue="咸鱼说个人词表.json";panel.allowedContentTypes=[.json];guard panel.runModal() == .OK,let url=panel.url else{return};do{try JSONEncoder().encode(app.store.vocabulary.map(\.word)).write(to:url,options:.atomic);message="词表已导出。"}catch{message=error.localizedDescription}}
 }
 struct StatisticsPage:View {
-    @ObservedObject var app:AppState
+    @ObservedObject var store:LibraryStore
+    @UIState private var today=Calendar.current.startOfDay(for:.now)
     var body:some View{
-        TimelineView(.periodic(from:.now,by:60)){context in
-            StatisticsDashboard(records:app.store.sessions,now:context.date)
-        }
+        StatisticsDashboard(records:store.sessions,now:today)
+            .onReceive(NotificationCenter.default.publisher(for:.NSCalendarDayChanged)){_ in refreshDay()}
+            .onReceive(NotificationCenter.default.publisher(for:.NSSystemTimeZoneDidChange)){_ in refreshDay()}
+            .onReceive(NSWorkspace.shared.notificationCenter.publisher(for:NSWorkspace.didWakeNotification)){_ in refreshDay()}
     }
+    private func refreshDay(){today=Calendar.current.startOfDay(for:.now)}
 }
 struct ModelsPage:View {
     @ObservedObject var app:AppState
     @ObservedObject private var downloads=ModelDownloads.shared
     @UIState private var status=""
     var body:some View{
-        ScrollView{VStack(alignment:.leading,spacing:24){
+        ScrollView{LazyVStack(alignment:.leading,spacing:24){
             VStack(alignment:.leading,spacing:10){
                 Text("用到什么，再下载什么。").font(.system(size:22,weight:.semibold))
                 Text("应用安装包不包含模型。识别用于基础听写；整理和翻译可以单独选装，下载完成直接启用。").font(.system(size:13)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)

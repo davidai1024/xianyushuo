@@ -168,9 +168,9 @@ enum AppPaths {
     }
 }
 enum Metrics {
+    private static let wordPattern=try? NSRegularExpression(pattern:"[\\p{Han}]|[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
     static func count(_ text: String) -> Int {
-        let pattern = "[\\p{Han}]|[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*"
-        return (try? NSRegularExpression(pattern:pattern).numberOfMatches(in:text,range:NSRange(text.startIndex...,in:text))) ?? 0
+        wordPattern?.numberOfMatches(in:text,range:NSRange(text.startIndex...,in:text)) ?? 0
     }
     static func totals(_ records: [SessionRecord]) -> (words: Int, sessions: Int, seconds: Double, wpm: Int) {
         let valid=records.filter(\.counted)

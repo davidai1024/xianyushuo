@@ -18,7 +18,7 @@ import SwiftUI
         }
         for (name,width,scheme,empty) in [("light-compact",CGFloat(650),ColorScheme.light,false),("dark-compact",650,.dark,false),("light-wide",960,.light,false),("dark-empty",650,.dark,true)]{
             NSApp.appearance=NSAppearance(named:scheme == .dark ? .darkAqua:.aqua)
-            let view=StatisticsContent(records:empty ? []:records,now:now).foregroundStyle(DianyuDesign.primary).frame(width:width).fixedSize(horizontal:false,vertical:true).padding(.vertical,20).background(DianyuDesign.page).environment(\.colorScheme,scheme)
+            let view=StatisticsContent(records:empty ? []:records,now:now,interactive:false).foregroundStyle(DianyuDesign.primary).frame(width:width).fixedSize(horizontal:false,vertical:true).padding(.vertical,20).background(DianyuDesign.page).environment(\.colorScheme,scheme)
             let renderer=ImageRenderer(content:view);renderer.scale=2
             guard let image=renderer.cgImage else{throw NSError(domain:"StatisticsPreview",code:1)}
             let bitmap=NSBitmapImageRep(cgImage:image)

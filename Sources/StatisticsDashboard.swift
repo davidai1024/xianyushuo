@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 enum ActivityColors {
     static let card=DianyuDesign.adaptive("ActivityCard",dark:0x282A2C,light:0xFFFFFF)
@@ -16,19 +17,69 @@ enum ActivityColors {
 private struct ActivityHatching:Shape {
     func path(in rect:CGRect)->Path{
         var path=Path()
-        for x in stride(from:-rect.height,through:rect.width,by:5){path.move(to:CGPoint(x:x,y:rect.maxY));path.addLine(to:CGPoint(x:x+rect.height,y:rect.minY))}
+        for x in stride(from:-rect.height,through:rect.width,by:5){
+            path.move(to:CGPoint(x:rect.minX+x,y:rect.maxY))
+            path.addLine(to:CGPoint(x:rect.minX+x+rect.height,y:rect.minY))
+        }
         return path
     }
 }
-struct StatisticsDashboard:View {
+struct StatisticsDashboard:NSViewRepresentable {
     let records:[SessionRecord]
     var now=Date()
-    var body:some View{ScrollView{StatisticsContent(records:records,now:now)}}
+    func makeNSView(context:Context)->StatisticsScrollView{
+        StatisticsScrollView(content:StatisticsContent(records:records,now:now))
+    }
+    func updateNSView(_ view:StatisticsScrollView,context:Context){
+        view.update(StatisticsContent(records:records,now:now))
+    }
+}
+/// Overlay scrolling keeps the document width independent of scroller visibility.
+final class StatisticsScrollView:NSScrollView {
+    private struct Document:View {
+        let content:StatisticsContent
+        let width:CGFloat
+        var body:some View{
+            content.foregroundStyle(DianyuDesign.primary).buttonStyle(FlatButtonStyle())
+                .frame(width:width,alignment:.topLeading).fixedSize(horizontal:false,vertical:true)
+        }
+    }
+    private var content:StatisticsContent
+    private let host:ClearHostingView<Document>
+    private var documentWidth:CGFloat=0
+    private var contentChanged=true
+    init(content:StatisticsContent){
+        self.content=content
+        host=ClearHostingView(rootView:Document(content:content,width:650))
+        super.init(frame:.zero)
+        host.sizingOptions=[.intrinsicContentSize]
+        drawsBackground=false
+        borderType = .noBorder
+        scrollerStyle = .overlay
+        hasVerticalScroller=true
+        autohidesScrollers=false
+        documentView=host
+    }
+    required init?(coder:NSCoder){fatalError("init(coder:) unavailable")}
+    func update(_ content:StatisticsContent){self.content=content;contentChanged=true;needsLayout=true}
+    override func layout(){
+        super.layout()
+        let width=contentSize.width
+        guard width>0 else{return}
+        if contentChanged || documentWidth != width{
+            documentWidth=width;contentChanged=false
+            host.rootView=Document(content:content,width:width)
+        }
+        let height=max(contentSize.height,ceil(host.intrinsicContentSize.height))
+        let size=NSSize(width:width,height:height)
+        if host.frame.size != size{host.setFrameSize(size)}
+    }
 }
 /// Shared content keeps preview rendering identical to the live scroll page.
 struct StatisticsContent:View {
     let records:[SessionRecord]
     var now=Date()
+    var interactive=true
     @UIState private var periodOffset=0
     var body:some View{
         let totals=Metrics.totals(records),streak=Metrics.streak(records,now:now)
@@ -50,7 +101,7 @@ struct StatisticsContent:View {
                         activityMetric("当前连续天数",value:streak.current)
                         activityMetric("最长连续天数",value:streak.longest)
                     }
-                    ActivityCalendarView(activity:activity,previous:{periodOffset-=1},next:{periodOffset+=1})
+                    ActivityCalendarView(activity:activity,interactive:interactive,previous:{periodOffset-=1},next:{periodOffset+=1})
                     if totals.sessions==0{Text("还没有听写记录，完成一次语音输入后会显示在这里。").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}
                 }.padding(22).background(ActivityColors.card,in:RoundedRectangle(cornerRadius:20))
                 HStack(alignment:.firstTextBaseline,spacing:22){
@@ -77,8 +128,10 @@ struct StatisticsContent:View {
 }
 private struct ActivityCalendarView:View {
     let activity:StatisticsActivity
+    let interactive:Bool
     let previous:()->Void,next:()->Void
     var body:some View{
+        let months=activity.months
         VStack(alignment:.leading,spacing:12){
             HStack(spacing:8){
                 Text("听写活动").font(.system(size:12,weight:.medium));Spacer()
@@ -86,21 +139,14 @@ private struct ActivityCalendarView:View {
                 navigation("上一段听写活动",symbol:"chevron.left",action:previous).disabled(!activity.canGoBack)
                 navigation("下一段听写活动",symbol:"chevron.right",action:next).disabled(!activity.canGoForward)
             }
-            HStack(alignment:.top,spacing:10){
-                VStack(spacing:0){ForEach(Array(["日","一","二","三","四","五","六"].enumerated()),id:\.offset){_,label in Text(label).font(.system(size:10)).foregroundStyle(DianyuDesign.secondary).frame(maxHeight:.infinity)}}.frame(width:12)
-                ActivityHeatmapLayout{ForEach(activity.days){day in
-                    ActivityDayCell(day:day).help(dayDescription(day)).accessibilityLabel(dayDescription(day))
-                }}
-            }.fixedSize(horizontal:false,vertical:true)
-            HStack(spacing:10){
-                Color.clear.frame(width:12,height:20)
-                GeometryReader{proxy in
-                    let grid=ActivityGridMetrics(width:proxy.size.width),labelWidth:CGFloat=32
-                    ForEach(activity.months){month in
-                        Text(month.title).font(.system(size:10)).foregroundStyle(DianyuDesign.secondary).frame(width:labelWidth,alignment:.leading)
-                            .offset(x:min(grid.frame(month.column*7).minX,max(0,proxy.size.width-labelWidth)),y:2)
-                    }
-                }.frame(height:20)
+            ActivityPlotLayout(monthColumns:months.map(\.column)){
+                ForEach(["日","一","二","三","四","五","六"],id:\.self){label in
+                    Text(label).font(.system(size:10)).foregroundStyle(DianyuDesign.secondary)
+                }
+                ActivityHeatmap(days:activity.days,interactive:interactive)
+                ForEach(months){month in
+                    Text(month.title).font(.system(size:10)).foregroundStyle(DianyuDesign.secondary)
+                }
             }
             HStack(spacing:6){
                 Text("更少").padding(.trailing,3)
@@ -115,23 +161,120 @@ private struct ActivityCalendarView:View {
     private func navigation(_ label:String,symbol:String,action:@escaping()->Void)->some View{
         Button(action:action){Image(systemName:symbol).font(.system(size:11,weight:.semibold)).frame(width:20,height:24).contentShape(Rectangle())}.buttonStyle(FlatButtonStyle(kind:.quiet)).accessibilityLabel(label).help(label)
     }
-    private func dayDescription(_ day:StatisticsActivity.Day)->String{
-        let text=day.date.formatted(.dateTime.year().month().day().weekday())
-        switch day.kind{case .future:return text+"，未来日期";case .beforeHistory:return text+"，早于首条听写记录";default:return text+"，\(day.count) 次听写"}
+}
+private struct ActivityPlotLayout:Layout {
+    let monthColumns:[Int]
+    private let axisWidth:CGFloat=22
+    private let monthHeight:CGFloat=32
+    func sizeThatFits(proposal:ProposedViewSize,subviews:Subviews,cache:inout())->CGSize{
+        let grid=ActivityGridMetrics(width:max(320,(proposal.width ?? 622)-axisWidth))
+        return CGSize(width:grid.width+axisWidth,height:grid.height+monthHeight)
+    }
+    func placeSubviews(in bounds:CGRect,proposal:ProposedViewSize,subviews:Subviews,cache:inout()){
+        let grid=ActivityGridMetrics(width:bounds.width-axisWidth)
+        for row in 0..<grid.rows{
+            subviews[row].place(at:CGPoint(x:bounds.minX+6,y:bounds.minY+grid.frame(row).midY),anchor:.center,proposal:.unspecified)
+        }
+        let left=bounds.minX+axisWidth
+        subviews[grid.rows].place(at:CGPoint(x:left,y:bounds.minY),anchor:.topLeading,
+                                 proposal:ProposedViewSize(width:grid.width,height:grid.height))
+        for (index,column) in monthColumns.enumerated(){
+            let x=min(grid.frame(column*grid.rows).minX,grid.width-32)
+            subviews[grid.rows+1+index].place(at:CGPoint(x:left+x,y:bounds.minY+grid.height+14),anchor:.topLeading,proposal:.unspecified)
+        }
     }
 }
-private struct ActivityDayCell:View {
-    let day:StatisticsActivity.Day
+private struct ActivityHeatmap:View {
+    let days:[StatisticsActivity.Day]
+    let interactive:Bool
     var body:some View{
-        GeometryReader{proxy in
-            let radius=min(5,proxy.size.width*0.25)
-            let shape=RoundedRectangle(cornerRadius:radius)
-            switch day.kind{
-            case .beforeHistory:ActivityHatching().stroke(ActivityColors.hatch,lineWidth:1.2).clipShape(shape)
-            case .future:shape.strokeBorder(ActivityColors.future,lineWidth:1)
-            case .empty:shape.fill(ActivityColors.empty)
-            case .activity:shape.fill(ActivityColors.levels[day.level])
+        Canvas{context,size in
+            let grid=ActivityGridMetrics(width:size.width)
+            let radius=min(5,grid.cell*0.25)
+            for day in days{
+                let rect=grid.frame(day.index)
+                let path=RoundedRectangle(cornerRadius:radius).path(in:rect)
+                switch day.kind{
+                case .beforeHistory:
+                    var cell=context
+                    cell.clip(to:path)
+                    cell.stroke(ActivityHatching().path(in:rect),with:.color(ActivityColors.hatch),lineWidth:1.2)
+                case .future:
+                    let inset=rect.insetBy(dx:0.5,dy:0.5)
+                    let outline=RoundedRectangle(cornerRadius:max(0,radius-0.5)).path(in:inset)
+                    context.stroke(outline,with:.color(ActivityColors.future),lineWidth:1)
+                case .empty,.activity:
+                    context.fill(path,with:.color(ActivityColors.levels[day.level]))
+                }
             }
+        }
+        .overlay{if interactive{ActivityHeatmapInteraction(days:days)}}
+    }
+}
+private struct ActivityHeatmapInteraction:NSViewRepresentable {
+    let days:[StatisticsActivity.Day]
+    func makeNSView(context:Context)->ActivityHeatmapView{ActivityHeatmapView(frame:.zero)}
+    func updateNSView(_ view:ActivityHeatmapView,context:Context){view.update(days)}
+}
+/// Supply native tooltips and accessibility without making each cell a view.
+private final class ActivityHeatmapView:NSView,NSViewToolTipOwner {
+    private var days:[StatisticsActivity.Day]=[]
+    private var toolTips:[NSView.ToolTipTag:Int]=[:]
+    private var dayElements:[NSAccessibilityElement]?
+    private var toolTipSize=CGSize.zero
+    override var isFlipped:Bool{true}
+
+    override init(frame:NSRect){
+        super.init(frame:frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("每日听写活动")
+    }
+    required init?(coder:NSCoder){fatalError("init(coder:) unavailable")}
+
+    func update(_ days:[StatisticsActivity.Day]){
+        guard self.days != days else{return}
+        self.days=days;dayElements=nil
+        updateToolTips()
+    }
+    override func layout(){
+        super.layout()
+        if bounds.size != toolTipSize{updateToolTips()}
+    }
+    private func updateToolTips(){
+        removeAllToolTips();toolTips.removeAll();toolTipSize=bounds.size
+        guard !bounds.isEmpty else{return}
+        let grid=ActivityGridMetrics(width:bounds.width)
+        for day in days {
+            let frame=grid.frame(day.index)
+            toolTips[addToolTip(frame,owner:self,userData:nil)]=day.index
+            dayElements?[day.index].setAccessibilityFrameInParentSpace(frame)
+        }
+    }
+    func view(_ view:NSView,stringForToolTip tag:NSView.ToolTipTag,point:NSPoint,userData:UnsafeMutableRawPointer?)->String{
+        guard let index=toolTips[tag] else{return ""}
+        return description(for:days[index])
+    }
+    override func accessibilityChildren()->[Any]?{
+        if dayElements==nil{
+            let grid=ActivityGridMetrics(width:bounds.width)
+            dayElements=days.map{day in
+                let element=NSAccessibilityElement()
+                element.setAccessibilityRole(.staticText)
+                element.setAccessibilityLabel(description(for:day))
+                element.setAccessibilityParent(self)
+                element.setAccessibilityFrameInParentSpace(grid.frame(day.index))
+                return element
+            }
+        }
+        return dayElements
+    }
+    private func description(for day:StatisticsActivity.Day)->String{
+        let text=day.date.formatted(.dateTime.year().month().day().weekday())
+        switch day.kind{
+        case .future:return text+"，未来日期"
+        case .beforeHistory:return text+"，早于首条听写记录"
+        default:return text+"，\(day.count) 次听写"
         }
     }
 }

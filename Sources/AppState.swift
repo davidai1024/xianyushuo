@@ -28,7 +28,6 @@ import CoreAudio
     private var pendingMuteRelease:String?
     @Published var outputMuteStatus="录音时自动静音，结束后恢复原状态。"
     let meter=WaveformSignal()
-    @Published var elapsed=0.0
     @Published var notice=""
     let navigation=PageSelection()
     var page:String {
@@ -51,7 +50,7 @@ import CoreAudio
     private var effectiveMicWarm:Bool {MicWarmPolicy.allows(requested:store.preferences.keepMicWarm,protectControls:store.preferences.preserveHeadphoneControls,bluetooth:headphoneWarmSuppressed)}
     private var subscription:AnyCancellable?
     private var tick:Timer?
-    private var started=Date()
+    private(set) var recordingStartedAt=Date()
     private var active:UUID?
     private var target:PasteTarget?
     private var pendingDelivery:Task<Void,Never>?
@@ -87,7 +86,8 @@ import CoreAudio
         recorder.onSegmentReady={ [weak self] segment in self?.enqueueSegment(segment) }
         engine.onProgress={ [weak self] _,message in
             guard let self,self.active != nil,self.phase=="working",!self.finishingCapture else{return}
-            self.stage=OverlayLayout.processingTitle(message)
+            let stage=OverlayLayout.processingTitle(message)
+            if self.stage != stage{self.stage=stage}
         }
         engine.onStatus={ [weak self] status in self?.engineStatus=status }
         engine.onCheckpoint={ [weak self] _,checkpoint in self?.checkpoint(checkpoint) }
@@ -180,7 +180,7 @@ import CoreAudio
            captured.bundleID==WeChatPasteContext.bundleID,captured.element==nil,captured.focusedOwner==nil,let pid=captured.pid {
             destination?.weChatContext=WeChatPasteContext.capture(pid:pid,activationGeneration:activationGeneration)
         }
-        phase="preparing";stage="准备录音";notice="";elapsed=0;meter.reset();overlay?.show()
+        phase="preparing";stage="准备录音";notice="";meter.reset();overlay?.show()
         Task {
             await Task.yield()
             if !Recorder.authorized {guard await Recorder.request() else{phase="error";stage="需要麦克风授权";notice="麦克风尚未授权，请在设置中允许咸鱼说录音。";page="权限";return}}
@@ -209,7 +209,7 @@ import CoreAudio
                 capture["audio_input"]=recorder.inputAudit.merging(recorder.readinessAudit){_,new in new}
                 record.metadata=String(data:try JSONSerialization.data(withJSONObject:capture,options:[.prettyPrinted,.sortedKeys]),encoding:.utf8) ?? ""
                 try store.update(record)
-                started=Date();phase="recording";stage=translate ? "录音 · 直接出英文":"正在录音";microphoneStatus=effectiveMicWarm ? "保温已生效，麦克风正在返回音频。":"录音中"
+                recordingStartedAt=Date();phase="recording";stage=translate ? "录音 · 直接出英文":"正在录音";microphoneStatus=effectiveMicWarm ? "保温已生效，麦克风正在返回音频。":"录音中"
                 tick?.invalidate()
                 tick=Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){[weak self]_ in Task{@MainActor in self?.recordingTick()}}
             } catch { pendingMuteRelease=recordingMute.prepareForDeviceRelease();recorder.shutdown();endRecordingSound();record.status="failed";record.error=error.localizedDescription;try? store.update(record);notice=error.localizedDescription;active=nil;phase="error";stage="录音未开始";overlay?.show() }
@@ -227,7 +227,8 @@ import CoreAudio
         pendingMuteRelease=nil;recordingMute.end(owner:owner)
     }
     private func recordingTick(){
-        guard phase=="recording" else{return};elapsed=Date().timeIntervalSince(started)
+        guard phase=="recording" else{return}
+        let elapsed=Date().timeIntervalSince(recordingStartedAt)
         if elapsed>=600 {finish(drainTail:false);return}
         if elapsed>4 && Date().timeIntervalSince(recorder.lastBufferTime)>3 {notice="麦克风没有返回音频，已停止并保留任务。";finish(drainTail:false)}
     }
