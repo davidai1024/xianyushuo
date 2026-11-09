@@ -10,6 +10,7 @@ typealias UIState<Value> = SwiftUI.State<Value>
 enum DianyuDesign {
     static let sidebarWidth:CGFloat=196
     static let sidebarInset:CGFloat=10
+    static let sidebarRadius:CGFloat=12
     static let contentInset:CGFloat=24
     static let appearanceKey="dianyu.appearance"
     static let accent=Color(red:102/255,green:253/255,blue:254/255)
@@ -152,7 +153,9 @@ final class NavigationGlassHost<Content:View>:NSView {
     required init?(coder:NSCoder){fatalError("init(coder:) unavailable")}
     override var isOpaque:Bool{false}
     @available(macOS 27.0,*)
-    override var cornerConfiguration:NSViewCornerConfiguration?{.uniformCorners(radius:.containerConcentric(6))}
+    override var cornerConfiguration:NSViewCornerConfiguration?{
+        .uniformCorners(radius:.containerConcentric(DianyuDesign.sidebarRadius))
+    }
     @available(macOS 27.0,*)
     override func viewDidChangeEffectiveCornerRadii(){
         super.viewDidChangeEffectiveCornerRadii()
@@ -177,7 +180,7 @@ final class NavigationGlassHost<Content:View>:NSView {
     private func updateCornerRadius(){
         let radius:CGFloat
         if #available(macOS 27.0,*),let radii=effectiveCornerRadii{radius=radii.topLeft}
-        else{radius=8}
+        else{radius=DianyuDesign.sidebarRadius}
         if #available(macOS 26.0,*),let glass=surface as? NSGlassEffectView{
             if glass.cornerRadius != radius{glass.cornerRadius=radius}
         }else if let layer=surface?.layer{
