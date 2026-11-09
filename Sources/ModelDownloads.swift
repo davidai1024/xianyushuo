@@ -13,9 +13,13 @@ enum ModelCatalog {
         return specs
     }
     static func installed(_ id:String,root:URL=AppPaths.models)->Bool{
-        guard let files=try? ModelResources.manifest()[id],!files.isEmpty else{return false}
+        guard let files=try? ModelResources.manifest()[id] else{return false}
+        return installed(files,in:root.appendingPathComponent(id))
+    }
+    static func installed(_ files:[ModelFile],in folder:URL)->Bool{
+        guard !files.isEmpty else{return false}
         return files.allSatisfy{file in
-            let path=root.appendingPathComponent(id).appendingPathComponent(file.path)
+            let path=folder.appendingPathComponent(file.path)
             return ((try? FileManager.default.attributesOfItem(atPath:path.path)[.size])as?NSNumber)?.int64Value==file.bytes
         }
     }
@@ -193,16 +197,38 @@ enum ModelFetch {
 
 @MainActor final class ModelDownloads:ObservableObject {
     static let shared=ModelDownloads()
+    struct Overview:Equatable {
+        let installed:Bool
+        let bytes:Int64
+        let hasPartial:Bool
+    }
     @Published var activeID:String?
     @Published var fraction=0.0
     @Published var status="模型按需下载，不会自动下载翻译模型。"
     @Published var revision=0
     @Published var mirror=true
+    @Published private(set) var overview:[String:Overview]=[:]
     private var ticket:ModelDownloadTicket?
     private var timer:Timer?
     private var generation=UUID()
-    var specs:[ModelSpec]{(try? ModelCatalog.load()) ?? []}
+    let specs=(try? ModelCatalog.load()) ?? []
     var downloading:Bool{activeID != nil}
+    func refreshOverview() async {
+        let ids=specs.map(\.id),root=AppPaths.root,models=AppPaths.models,expectedRevision=revision
+        let next=await Task.detached(priority:.utility){()->[String:Overview] in
+            let manifest=(try? ModelResources.manifest()) ?? [:]
+            var result:[String:Overview]=[:]
+            for id in ids{
+                let files=manifest[id] ?? []
+                let installed=ModelCatalog.installed(files,in:models.appendingPathComponent(id))
+                result[id]=Overview(installed:installed,bytes:files.reduce(0){$0+$1.bytes},
+                                    hasPartial:!installed && ModelFetch.progress(id,files:files,root:root)>0)
+            }
+            return result
+        }.value
+        guard !Task.isCancelled,revision==expectedRevision,next != overview else{return}
+        overview=next
+    }
     func start(_ spec:ModelSpec){
         guard !downloading else{return}
         do{

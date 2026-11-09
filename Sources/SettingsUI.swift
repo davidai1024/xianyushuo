@@ -51,18 +51,21 @@ struct SettingsPage:View {
     @ObservedObject private var updates=UpdateManager.shared
     @AppStorage(DianyuDesign.appearanceKey) private var appearance="system"
     @AppStorage(CorrectionLearning.preferenceKey) private var suggestCorrections=true
+    private enum ScrollTarget:Hashable{case top}
     var body:some View{
-        ScrollView{
-            VStack(alignment:.leading,spacing:18){
-                switch section {
-                case "录音":recording
-                case "快捷键":ShortcutSettingsPage(app:app)
-                case "权限":permissions
-                case "关于":about
-                default:general
-                }
-            }.padding(.leading,20).padding(.trailing,24).padding(.bottom,20).frame(maxWidth:.infinity,alignment:.leading)
-        }.id(section).font(.system(size:13)).disabled(app.busy)
+        ScrollViewReader{proxy in
+            ScrollView{
+                VStack(alignment:.leading,spacing:18){
+                    switch section {
+                    case "录音":recording
+                    case "快捷键":ShortcutSettingsPage(app:app)
+                    case "权限":permissions
+                    case "关于":about
+                    default:general
+                    }
+                }.padding(.leading,20).padding(.trailing,24).padding(.bottom,20).frame(maxWidth:.infinity,alignment:.leading).id(ScrollTarget.top)
+            }.onChange(of:section){_,_ in proxy.scrollTo(ScrollTarget.top,anchor:.top)}
+        }.font(.system(size:13)).disabled(app.busy)
         .onChange(of:app.store.preferences){_ in app.applyPreferences()}
         .onChange(of:suggestCorrections){value in if !value{app.stopCorrectionLearning()}}
     }

@@ -9,9 +9,10 @@ final class KeyboardFocusFeedback:ObservableObject {
     func start(){
         guard monitor==nil else{return}
         monitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.leftMouseDown,.rightMouseDown,.otherMouseDown]){[weak self] event in
+            guard let self else{return event}
             if event.type == .keyDown {
-                if [48,123,124,125,126,115,119].contains(event.keyCode){self?.visible=true}
-            }else{self?.visible=false}
+                if !self.visible,[48,123,124,125,126,115,119].contains(event.keyCode){self.visible=true}
+            }else if self.visible{self.visible=false}
             return event
         }
     }

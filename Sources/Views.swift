@@ -3,6 +3,7 @@ import AppKit
 import AVFoundation
 import ApplicationServices
 import UniformTypeIdentifiers
+import Combine
 
 private struct NavigationEntry:Identifiable{let id:String,title:String,symbol:String,color:Color}
 private struct NavigationHover:ButtonStyle {
@@ -13,19 +14,14 @@ private struct NavigationHover:ButtonStyle {
 }
 struct RootView:View {
     @ObservedObject var app:AppState
-    @UIState private var query=""
     @AppStorage(DianyuDesign.appearanceKey) private var appearance="system"
-    private let workspace:[NavigationEntry]=[
-        .init(id:"输入",title:"输入",symbol:"waveform",color:.blue),.init(id:"历史",title:"历史",symbol:"clock.arrow.circlepath",color:.orange),.init(id:"个人词表",title:"个人词表",symbol:"text.book.closed",color:.purple),.init(id:"统计",title:"统计",symbol:"chart.bar.xaxis",color:.green)]
-    private let preferences:[NavigationEntry]=[
-        .init(id:"设置",title:"通用",symbol:"slider.horizontal.3",color:.gray),.init(id:"录音",title:"录音",symbol:"mic",color:.purple),.init(id:"快捷键",title:"快捷键",symbol:"command",color:.pink),.init(id:"权限",title:"权限",symbol:"lock.shield",color:.cyan),.init(id:"模型资源",title:"模型",symbol:"cpu",color:.orange),.init(id:"关于",title:"关于",symbol:"info.circle",color:.blue)]
     private var title:String{app.page=="设置" ? "通用":app.page=="模型资源" ? "模型":app.page}
     private var subtitle:String{
         switch app.page{case "设置":return "外观、输出与本地记录。";case "录音":return "选择麦克风，让每次起录更从容。";case "快捷键":return "按你的习惯，随时开始听写与翻译。";case "权限":return "管理录音与跨应用填入所需的系统授权。";case "关于":return "版本、更新与本地隐私。";case "模型资源":return "识别、整理与翻译，全部在这台 Mac 上完成。";case "统计":return "看看你用声音写下了多少内容。";case "历史":return "原音、原文与每一次结果，都可以找回。";case "个人词表":return "让常用词参与每一次识别。";default:return "在本机识别、整理，再写入当前应用。"}
     }
     var body:some View{
         HStack(spacing:0){
-            NavigationGlass(content:sidebar.ignoresSafeArea()).frame(width:196).padding(.leading,10).padding(.trailing,12).padding(.vertical,10)
+            NavigationGlass(content:NavigationSidebar(app:app)).equatable().frame(width:196).padding(.leading,10).padding(.trailing,12).padding(.vertical,10)
             VStack(alignment:.leading,spacing:0){
                 VStack(alignment:.leading,spacing:5){Text(title).font(.system(size:28,weight:.semibold));Text(subtitle).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}.frame(maxWidth:.infinity,alignment:.leading).padding(.leading,20).padding(.trailing,24).padding(.top,26).padding(.bottom,app.page=="个人词表" ? 10:20)
                 if app.capturing && app.page != "输入"{
@@ -45,7 +41,21 @@ struct RootView:View {
             .foregroundStyle(DianyuDesign.primary).buttonStyle(FlatButtonStyle()).preferredColorScheme(appearance=="dark" ? .dark:appearance=="light" ? .light:nil)
             .onAppear{DianyuDesign.applyAppearance();KeyboardFocusFeedback.shared.start()}.onChange(of:appearance){_ in DianyuDesign.applyAppearance()}
     }
-    private var sidebar:some View{
+}
+/// Retained inside its own AppKit host. Only navigation and the footer status
+/// subscribe here; recording ticks and unrelated settings never replace its root.
+private struct NavigationSidebar:View,Equatable {
+    let app:AppState
+    @UIState private var query=""
+    @UIState private var page=""
+    @UIState private var busy=false
+    @UIState private var failed=false
+    static func ==(lhs:Self,rhs:Self)->Bool{lhs.app === rhs.app}
+    private let workspace:[NavigationEntry]=[
+        .init(id:"输入",title:"输入",symbol:"waveform",color:.blue),.init(id:"历史",title:"历史",symbol:"clock.arrow.circlepath",color:.orange),.init(id:"个人词表",title:"个人词表",symbol:"text.book.closed",color:.purple),.init(id:"统计",title:"统计",symbol:"chart.bar.xaxis",color:.green)]
+    private let preferences:[NavigationEntry]=[
+        .init(id:"设置",title:"通用",symbol:"slider.horizontal.3",color:.gray),.init(id:"录音",title:"录音",symbol:"mic",color:.purple),.init(id:"快捷键",title:"快捷键",symbol:"command",color:.pink),.init(id:"权限",title:"权限",symbol:"lock.shield",color:.cyan),.init(id:"模型资源",title:"模型",symbol:"cpu",color:.orange),.init(id:"关于",title:"关于",symbol:"info.circle",color:.blue)]
+    var body:some View{
         VStack(alignment:.leading,spacing:0){
             NativeWindowControls().frame(height:30).padding(.bottom,12)
             HStack(spacing:10){BrandMark(size:36);VStack(alignment:.leading,spacing:4){Text("咸鱼说").font(.system(size:19,weight:.bold));Text("把想法，说出来。").font(.system(size:11)).foregroundStyle(DianyuDesign.onGlassMuted)};Spacer(minLength:0)}.padding(.horizontal,10).padding(.bottom,22)
@@ -58,8 +68,13 @@ struct RootView:View {
                 }.padding(.bottom,12)
             }.scrollIndicators(.hidden)
             Rectangle().fill(DianyuDesign.line).frame(height:1).padding(.bottom,14)
-            HStack{Text("版本 \(DianyuDesign.version)");Spacer();HStack(spacing:5){Circle().fill(app.phase=="error" ? Color.orange:DianyuDesign.accent.opacity(0.65)).frame(width:4,height:4);Text(app.busy ? "处理中":"完全本地")}}.font(.system(size:11)).foregroundStyle(DianyuDesign.onGlassMuted).padding(.horizontal,8).padding(.bottom,8)
-        }.padding(12).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
+            HStack{Text("版本 \(DianyuDesign.version)");Spacer();HStack(spacing:5){Circle().fill(failed ? Color.orange:DianyuDesign.accent.opacity(0.65)).frame(width:4,height:4);Text(busy ? "处理中":"完全本地")}}.font(.system(size:11)).foregroundStyle(DianyuDesign.onGlassMuted).padding(.horizontal,8).padding(.bottom,8)
+        }.padding(12).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).ignoresSafeArea()
+            .onReceive(app.$page.removeDuplicates()){page=$0}
+            .onReceive(app.$phase.map{$0=="error"}.removeDuplicates()){failed=$0}
+            .onReceive(app.$phase.combineLatest(app.$resourcesBusy){phase,resourcesBusy in
+                resourcesBusy || ["preparing","recording","working"].contains(phase)
+            }.removeDuplicates()){busy=$0}
     }
     private func matches(_ e:NavigationEntry)->Bool{query.isEmpty || e.title.localizedCaseInsensitiveContains(query)}
     @ViewBuilder private func navigationGroup(_ title:String,entries:[NavigationEntry])->some View{
@@ -67,8 +82,8 @@ struct RootView:View {
         if !filtered.isEmpty{
             Text(title).font(.system(size:11,weight:.semibold)).foregroundStyle(DianyuDesign.onGlassMuted).padding(.horizontal,10).padding(.top,title=="工作区" ? 0:20).padding(.bottom,6)
             ForEach(filtered){entry in Button{app.page=entry.id}label:{
-                HStack(spacing:11){Image(systemName:entry.symbol).font(.system(size:15,weight:.medium)).foregroundStyle(app.page==entry.id ? .white:entry.color).frame(width:23,height:23).background(entry.color.opacity(app.page==entry.id ? 0.80:0.18),in:RoundedRectangle(cornerRadius:7)).overlay(RoundedRectangle(cornerRadius:7).strokeBorder(entry.color.opacity(0.26),lineWidth:0.7));Text(entry.title).font(.system(size:13.5,weight:app.page==entry.id ? .semibold:.medium));Spacer(minLength:0)}.foregroundStyle(.primary).padding(.horizontal,10).frame(height:38).background(app.page==entry.id ? Color.primary.opacity(0.12):.clear,in:RoundedRectangle(cornerRadius:11)).contentShape(Rectangle()).textSelection(.disabled)
-            }.buttonStyle(NavigationHover()).focusEffectDisabled().accessibilityAddTraits(app.page==entry.id ? [.isSelected]:[]) }
+                HStack(spacing:11){Image(systemName:entry.symbol).font(.system(size:15,weight:.medium)).foregroundStyle(page==entry.id ? .white:entry.color).frame(width:23,height:23).background(entry.color.opacity(page==entry.id ? 0.80:0.18),in:RoundedRectangle(cornerRadius:7)).overlay(RoundedRectangle(cornerRadius:7).strokeBorder(entry.color.opacity(0.26),lineWidth:0.7));Text(entry.title).font(.system(size:13.5,weight:page==entry.id ? .semibold:.medium));Spacer(minLength:0)}.foregroundStyle(.primary).padding(.horizontal,10).frame(height:38).background(page==entry.id ? Color.primary.opacity(0.12):.clear,in:RoundedRectangle(cornerRadius:11)).contentShape(Rectangle()).textSelection(.disabled)
+            }.buttonStyle(NavigationHover()).focusEffectDisabled().accessibilityAddTraits(page==entry.id ? [.isSelected]:[]) }
         }
     }
 }
@@ -337,7 +352,7 @@ struct ModelsPage:View {
                     Text("已下载 \(Int(downloads.fraction*100))% · 不影响已安装模型的使用").font(.system(size:11)).foregroundStyle(DianyuDesign.secondary)
                 }
             }else{Text(downloads.status).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)}
-            HStack{Text("只想把说的话转成文字？").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary);Spacer();Button("使用基础听写（不整理）"){app.store.preferences.cleanup = .none;app.applyPreferences();app.page="输入"}.disabled(!ModelCatalog.installed("Qwen3-ASR-1.7B-8bit") || app.busy)}
+            HStack{Text("只想把说的话转成文字？").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary);Spacer();Button("使用基础听写（不整理）"){app.store.preferences.cleanup = .none;app.applyPreferences();app.page="输入"}.disabled(downloads.overview["Qwen3-ASR-1.7B-8bit"]?.installed != true || app.busy)}
             PreferenceCard(title:"本地管理",detail:"现有模型保持独立，应用更新无需重新下载。"){
                 PreferenceRow(title:"模型文件夹",detail:"可从其他电脑复制，再导入需要的模型。",symbol:"folder"){Button("在访达中查看"){NSWorkspace.shared.open(AppPaths.models)}}
                 PreferenceDivider()
@@ -347,15 +362,16 @@ struct ModelsPage:View {
             }.disabled(app.busy || downloads.downloading)
             if !status.isEmpty{Text(status).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)}
         }.padding(.leading,20).padding(.trailing,24).padding(.bottom,28)}
+        .task(id:downloads.revision){await downloads.refreshOverview()}
     }
     @ViewBuilder private func modelRow(_ spec:ModelSpec)->some View{
-        let installed=ModelCatalog.installed(spec.id)
-        let files=(try? ModelResources.manifest()[spec.id]) ?? []
-        let size=Double(files.reduce(Int64(0)){$0+$1.bytes})/1_000_000_000
-        PreferenceRow(title:spec.title+(spec.role=="asr" ? " · 必需":" · 选装"),detail:spec.detail+"\n"+spec.id+String(format:" · %.2f GB",size),symbol:spec.role=="asr" ? "waveform":spec.role=="cleanup" ? "sparkles":"translate"){
-            if installed{Label("已安装",systemImage:"checkmark.circle").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}
+        let overview=downloads.overview[spec.id]
+        let size=overview.map{String(format:" · %.2f GB",Double($0.bytes)/1_000_000_000)} ?? ""
+        PreferenceRow(title:spec.title+(spec.role=="asr" ? " · 必需":" · 选装"),detail:spec.detail+"\n"+spec.id+size,symbol:spec.role=="asr" ? "waveform":spec.role=="cleanup" ? "sparkles":"translate"){
+            if overview?.installed==true{Label("已安装",systemImage:"checkmark.circle").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}
             else if downloads.activeID==spec.id{Text("下载中").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}
-            else{Button(ModelFetch.progress(spec.id,files:files,root:AppPaths.root)>0 ? "继续下载":"下载"){downloads.start(spec)}.disabled(downloads.downloading || app.resourcesBusy)}
+            else if let overview{Button(overview.hasPartial ? "继续下载":"下载"){downloads.start(spec)}.disabled(downloads.downloading || app.resourcesBusy)}
+            else{Text("正在检查").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}
         }
     }
     func verify(){
@@ -376,7 +392,7 @@ struct ModelsPage:View {
         let url=single ? selected.deletingLastPathComponent():selected
         app.resourcesBusy=true;status="正在校验并导入选定模型，原文件保持不变。"
         app.engine.stop()
-        Task{do{let all=try ModelResources.manifest();let manifest=single ? all.filter{$0.key==selected.lastPathComponent}:all;try await Task.detached{try ModelResources.importModels(from:url,manifest:manifest)}.value;status="模型已导入并通过校验，无需重启应用。"}catch{status=error.localizedDescription};app.resourcesBusy=false;app.startServices()}
+        Task{do{let all=try ModelResources.manifest();let manifest=single ? all.filter{$0.key==selected.lastPathComponent}:all;try await Task.detached{try ModelResources.importModels(from:url,manifest:manifest)}.value;downloads.revision+=1;status="模型已导入并通过校验，无需重启应用。"}catch{status=error.localizedDescription};app.resourcesBusy=false;app.startServices()}
     }
 }
 struct KeycapStrip:View {

@@ -138,8 +138,9 @@ struct WindowBackdrop:NSViewRepresentable {
 }
 final class ClearHostingView<Content:View>:NSHostingView<Content>{override var isOpaque:Bool{false}}
 /// NSGlassEffectView owns its SwiftUI content. No opaque view is layered over it.
-struct NavigationGlass<Content:View>:NSViewRepresentable {
+struct NavigationGlass<Content:View & Equatable>:NSViewRepresentable,Equatable {
     let content:Content
+    static func ==(lhs:Self,rhs:Self)->Bool{lhs.content==rhs.content}
     func makeNSView(context:Context)->NavigationGlassHost<Content>{NavigationGlassHost(content:content)}
     func updateNSView(_ view:NavigationGlassHost<Content>,context:Context){view.update(content)}
 }
@@ -173,7 +174,7 @@ final class NavigationGlassHost<Content:View>:NSView {
 /// Original titlebar buttons stay hidden; there is exactly one visible control set.
 struct NativeWindowControls:NSViewRepresentable {
     func makeNSView(context:Context)->TrafficLightHost{TrafficLightHost()}
-    func updateNSView(_ view:TrafficLightHost,context:Context){view.adoptButtons()}
+    func updateNSView(_ view:TrafficLightHost,context:Context){}
     static func dismantleNSView(_ view:TrafficLightHost,coordinator:()){view.restoreButtons()}
 }
 final class TrafficLightHost:NSView {

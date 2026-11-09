@@ -144,7 +144,11 @@ import CoreAudio
         }
     }
     func refreshDevices(){microphones=AudioDevices.list()}
-    func pauseShortcutCapture(_ paused:Bool){hotkeys.suppress=paused;if !paused{shortcutError=hotkeys.errors.joined(separator:"\n")}}
+    func pauseShortcutCapture(_ paused:Bool){
+        guard hotkeys.suppress != paused else{return}
+        hotkeys.suppress=paused
+        if !paused{shortcutError=hotkeys.errors.joined(separator:"\n")}
+    }
     func hotkey(_ id:UInt32,down:Bool){
         if store.preferences.holdToTalk { if down && !busy {begin(translate:id==2,fromHotkey:true)}else if !down {beginToken+=1;if capturing{finish()}} }
         else if down { if capturing{finish()}else if !busy{begin(translate:id==2,fromHotkey:true)} }
