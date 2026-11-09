@@ -62,7 +62,6 @@ import CoreAudio
     private var lastAccessibility=false
     private var servicesStarted=false
     private var inputObserver:DefaultInputObserver?
-    private var configurationObserver:AudioConfigurationObserver?
     private var warmToken=0
     private var streamingTasks:[Int:Task<[String:Any],Error>]=[:]
     var capturing:Bool {phase=="preparing" || phase=="recording"}
@@ -93,10 +92,7 @@ import CoreAudio
         engine.onCheckpoint={ [weak self] _,checkpoint in self?.checkpoint(checkpoint) }
         NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification,object:nil,queue:.main){[weak self]_ in Task{@MainActor in self?.sleep()}}
         NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didWakeNotification,object:nil,queue:.main){[weak self]_ in Task{@MainActor in self?.wake()}}
-        configurationObserver=AudioConfigurationObserver{[weak self] source in
-            guard let self,self.recorder.configurationIdentity==source else{return}
-            self.deviceChanged()
-        }
+        recorder.onConfigurationChange={ [weak self] in self?.deviceChanged() }
         NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didActivateApplicationNotification,object:nil,queue:.main){[weak self]_ in
             Task{@MainActor in
                 guard let self else{return}

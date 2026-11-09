@@ -99,12 +99,14 @@ enum MicWarmPolicy {
 }
 final class Recorder {
     private var engine:AVAudioEngine?
+    private var configurationObserver:AudioConfigurationObserver?
     private var file:AVAudioFile?
     private var streaming:StreamingCapture?
     private(set) var completedSegments:[CapturedSegment]=[]
     private(set) var streamingAudit:[String:Any]=[:]
     var onReleaseFinished:(()->Void)?
     var onSegmentReady:((CapturedSegment)->Void)?
+    var onConfigurationChange:(()->Void)?
     private let lock=NSLock()
     private var frames:AVAudioFramePosition=0
     private var rate=48000.0
@@ -137,7 +139,6 @@ final class Recorder {
     var lastBufferTime:Date {lock.lock();defer{lock.unlock()};return receivedAt}
     var stopTailSeconds:Double {lock.withLock{RecordingTail.seconds(bufferFrames:lastBufferFrames,sampleRate:rate)}}
     var isRunning:Bool {engine?.isRunning == true}
-    var configurationIdentity:ObjectIdentifier? {engine.map(ObjectIdentifier.init)}
     private var actualDevice:AudioDeviceID?{
         guard let unit=engine?.inputNode.audioUnit else{return nil}
         var result=AudioDeviceID(0),size=UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -181,6 +182,7 @@ final class Recorder {
         let owner=lock.withLock{captureGeneration}
         input.installTap(onBus:0,bufferSize:1024,format:format) { [weak self] buffer,_ in self?.consume(buffer,owner:owner) }
         tapInstalled=true;self.engine=engine
+        configurationObserver=AudioConfigurationObserver(engine:engine){[weak self] in self?.onConfigurationChange?()}
         // Attach the durable writer before the very first engine callback.
         // Previously callbacks between start() and begin() were discarded.
         do{try beforeStart?(format);lock.withLock{writerBeforeStart=beforeStart != nil}}catch{shutdown();throw error}
@@ -245,6 +247,7 @@ final class Recorder {
         configuredAt=Date()
         lock.lock();captureGeneration=UUID();file=nil;streaming=nil;firstBuffer=nil;usableAt=Date.distantPast;usableSeen=false;lock.unlock()
         let retired=engine,hadTap=tapInstalled,activityLease=activity
+        configurationObserver=nil
         engine=nil;tapInstalled=false;activity=nil;currentUID="";inputAudit=[:]
         guard retired != nil || activityLease != nil else{return}
         let release={

@@ -5,13 +5,13 @@ import AVFoundation
 /// main can wait for that very queue. Only the actor callback is asynchronous.
 final class AudioConfigurationObserver {
     private var token:NSObjectProtocol?
-    init(_ callback:@escaping @MainActor @Sendable (ObjectIdentifier)->Void){
-        token=NotificationCenter.default.addObserver(forName:.AVAudioEngineConfigurationChange,object:nil,queue:nil){note in
-            guard let engine=note.object as?AVAudioEngine else{return}
-            // Do not retain the AVAudioEngine/Notification across this hop.
-            Task{@MainActor [weak engine]in
-                guard let engine else{return}
-                callback(ObjectIdentifier(engine))
+    init(engine:AVAudioEngine,_ callback:@escaping @MainActor @Sendable ()->Void){
+        token=NotificationCenter.default.addObserver(forName:.AVAudioEngineConfigurationChange,object:engine,queue:nil){[weak self] _ in
+            // Teardown can post while the sender is deallocating. Only the
+            // observer's lifetime crosses the queue boundary.
+            Task{@MainActor in
+                guard self != nil else{return}
+                callback()
             }
         }
     }
