@@ -14,26 +14,28 @@ private struct NavigationHover:ButtonStyle {
 }
 struct RootView:View {
     @ObservedObject var app:AppState
+    @ObservedObject private var navigation:PageSelection
     @AppStorage(DianyuDesign.appearanceKey) private var appearance="system"
-    private var title:String{app.page=="设置" ? "通用":app.page=="模型资源" ? "模型":app.page}
+    init(app:AppState){self.app=app;navigation=app.navigation}
+    private var page:String{navigation.value}
+    private var title:String{page=="设置" ? "通用":page=="模型资源" ? "模型":page}
     private var subtitle:String{
-        switch app.page{case "设置":return "外观、输出与本地记录。";case "录音":return "选择麦克风，让每次起录更从容。";case "快捷键":return "按你的习惯，随时开始听写与翻译。";case "权限":return "管理录音与跨应用填入所需的系统授权。";case "关于":return "版本、更新与本地隐私。";case "模型资源":return "识别、整理与翻译，全部在这台 Mac 上完成。";case "统计":return "看看你用声音写下了多少内容。";case "历史":return "原音、原文与每一次结果，都可以找回。";case "个人词表":return "让常用词参与每一次识别。";default:return "在本机识别、整理，再写入当前应用。"}
+        switch page{case "设置":return "外观、输出与本地记录。";case "录音":return "选择麦克风，让每次起录更从容。";case "快捷键":return "按你的习惯，随时开始听写与翻译。";case "权限":return "管理录音与跨应用填入所需的系统授权。";case "关于":return "版本、更新与本地隐私。";case "模型资源":return "识别、整理与翻译，全部在这台 Mac 上完成。";case "统计":return "看看你用声音写下了多少内容。";case "历史":return "原音、原文与每一次结果，都可以找回。";case "个人词表":return "让常用词参与每一次识别。";default:return "在本机识别、整理，再写入当前应用。"}
     }
     var body:some View{
         HStack(spacing:0){
             NavigationGlass(content:NavigationSidebar(app:app)).equatable().frame(width:196).padding(.leading,10).padding(.trailing,12).padding(.vertical,10)
             VStack(alignment:.leading,spacing:0){
-                VStack(alignment:.leading,spacing:5){Text(title).font(.system(size:28,weight:.semibold));Text(subtitle).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}.frame(maxWidth:.infinity,alignment:.leading).padding(.leading,20).padding(.trailing,24).padding(.top,26).padding(.bottom,app.page=="个人词表" ? 10:20)
-                if app.capturing && app.page != "输入"{
+                VStack(alignment:.leading,spacing:5){Text(title).font(.system(size:28,weight:.semibold));Text(subtitle).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}.frame(maxWidth:.infinity,alignment:.leading).padding(.leading,20).padding(.trailing,24).padding(.top,26).padding(.bottom,page=="个人词表" ? 10:20)
+                if app.capturing && page != "输入"{
                     HStack{Label(app.phase=="preparing" ? "麦克风准备中，关闭窗口会取消准备。":"录音继续进行，关闭窗口会结束并保存。",systemImage:"mic.fill").font(.system(size:12));Spacer();Button("返回录音"){app.page="输入"};Button(app.phase=="preparing" ? "取消准备":"结束并保存"){if app.phase=="preparing"{app.cancel()}else{app.finish()}}}.foregroundStyle(DianyuDesign.secondary).padding(.leading,20).padding(.trailing,24).padding(.bottom,14)
                 }
                 if !app.store.storageError.isEmpty{Text(app.store.storageError).foregroundStyle(.orange).padding(.leading,20).padding(.trailing,24).padding(.bottom,12)}
-                Group{switch app.page{
+                Group{switch page{
                 case "历史":HistoryPage(app:app)
                 case "个人词表":VocabularyPage(app:app)
                 case "统计":StatisticsPage(app:app)
-                case "模型资源":ModelsPage(app:app)
-                case "设置","录音","快捷键","权限","关于":SettingsPage(app:app,section:app.page)
+                case "设置","录音","快捷键","权限","关于","模型资源":SettingsWorkspace(app:app,section:page)
                 default:InputPage(app:app)
                 }}.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
             }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(DianyuDesign.page)
@@ -70,7 +72,7 @@ private struct NavigationSidebar:View,Equatable {
             Rectangle().fill(DianyuDesign.line).frame(height:1).padding(.bottom,14)
             HStack{Text("版本 \(DianyuDesign.version)");Spacer();HStack(spacing:5){Circle().fill(failed ? Color.orange:DianyuDesign.accent.opacity(0.65)).frame(width:4,height:4);Text(busy ? "处理中":"完全本地")}}.font(.system(size:11)).foregroundStyle(DianyuDesign.onGlassMuted).padding(.horizontal,8).padding(.bottom,8)
         }.padding(12).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).ignoresSafeArea()
-            .onReceive(app.$page.removeDuplicates()){page=$0}
+            .onReceive(app.navigation.$value){page=$0}
             .onReceive(app.$phase.map{$0=="error"}.removeDuplicates()){failed=$0}
             .onReceive(app.$phase.combineLatest(app.$resourcesBusy){phase,resourcesBusy in
                 resourcesBusy || ["preparing","recording","working"].contains(phase)

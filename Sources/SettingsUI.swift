@@ -45,6 +45,91 @@ struct PreferenceSwitch:View {
 struct PermissionStatus:View {
     var body:some View{HStack(spacing:6){Image(systemName:"checkmark").font(.system(size:9,weight:.bold)).foregroundStyle(.white).frame(width:18,height:18).background(.green,in:Circle());Text("已授权").font(.system(size:12))}.foregroundStyle(DianyuDesign.secondary).accessibilityElement(children:.combine)}
 }
+struct SettingsWorkspace:View {
+    @ObservedObject var app:AppState
+    let section:String
+    @AppStorage(CorrectionLearning.preferenceKey) private var suggestCorrections=true
+
+    var body:some View{
+        ZStack(alignment:.topLeading){
+            RetainedSettingsPages(app:app,section:section)
+                .frame(maxWidth:.infinity,maxHeight:.infinity)
+            if !RetainedSettingsHost.sections.contains(section){
+                SettingsPage(app:app,section:section)
+            }
+        }
+        .onChange(of:app.store.preferences){_,_ in app.applyPreferences()}
+        .onChange(of:suggestCorrections){_,value in if !value{app.stopCorrectionLearning()}}
+        .task(id:section){
+            if section=="设置" || section=="模型资源"{await ModelDownloads.shared.refreshOverview()}
+        }
+    }
+}
+
+/// Keep the two heavier pages mounted while the settings workspace is open.
+/// AppKit hides the inactive page, including its focus and accessibility tree.
+private struct RetainedSettingsPages:NSViewRepresentable {
+    let app:AppState
+    let section:String
+    func makeNSView(context:Context)->RetainedSettingsHost{RetainedSettingsHost(app:app)}
+    func updateNSView(_ host:RetainedSettingsHost,context:Context){host.select(section)}
+    static func dismantleNSView(_ host:RetainedSettingsHost,coordinator:()){host.cancelPreload()}
+}
+
+@MainActor final class RetainedSettingsHost:NSView {
+    static let sections=["录音","模型资源"]
+    private let app:AppState
+    private var pages:[String:ClearHostingView<AnyView>]=[:]
+    private var selected:String?
+    private var preload:DispatchWorkItem?
+
+    init(app:AppState){self.app=app;super.init(frame:.zero)}
+    required init?(coder:NSCoder){fatalError("init(coder:) unavailable")}
+
+    func select(_ section:String){
+        let next=Self.sections.contains(section) ? section:nil
+        guard next != selected else{return}
+        if let selected,let old=pages[selected]{
+            if let focused=window?.firstResponder as? NSView,focused.isDescendant(of:old){
+                window?.makeFirstResponder(nil)
+            }
+            old.isHidden=true
+        }
+        selected=next
+        if let next{makePage(next).isHidden=false}
+        schedulePreload()
+    }
+
+    private func makePage(_ section:String)->ClearHostingView<AnyView>{
+        if let existing=pages[section]{return existing}
+        let content:AnyView=section=="录音" ? AnyView(SettingsPage(app:app,section:section)):AnyView(ModelsPage(app:app))
+        let view=ClearHostingView(rootView:AnyView(content.tint(DianyuDesign.accent)
+            .foregroundStyle(DianyuDesign.primary).buttonStyle(FlatButtonStyle())))
+        view.sizingOptions=[]
+        view.frame=bounds
+        view.autoresizingMask=[.width,.height]
+        view.isHidden=true
+        addSubview(view)
+        pages[section]=view
+        return view
+    }
+
+    private func schedulePreload(){
+        cancelPreload()
+        guard window != nil,let next=Self.sections.first(where:{pages[$0]==nil}) else{return}
+        let work=DispatchWorkItem{[weak self] in
+            guard let self,self.window?.isVisible==true,!self.bounds.isEmpty else{return}
+            self.makePage(next).layoutSubtreeIfNeeded()
+            self.schedulePreload()
+        }
+        preload=work
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.10,execute:work)
+    }
+    func cancelPreload(){preload?.cancel();preload=nil}
+    override func viewDidMoveToWindow(){super.viewDidMoveToWindow();schedulePreload()}
+    override func hitTest(_ point:NSPoint)->NSView?{selected==nil ? nil:super.hitTest(point)}
+}
+
 struct SettingsPage:View {
     @ObservedObject var app:AppState
     let section:String
@@ -66,8 +151,6 @@ struct SettingsPage:View {
                 }.padding(.leading,20).padding(.trailing,24).padding(.bottom,20).frame(maxWidth:.infinity,alignment:.leading).id(ScrollTarget.top)
             }.onChange(of:section){_,_ in proxy.scrollTo(ScrollTarget.top,anchor:.top)}
         }.font(.system(size:13)).disabled(app.busy)
-        .onChange(of:app.store.preferences){_ in app.applyPreferences()}
-        .onChange(of:suggestCorrections){value in if !value{app.stopCorrectionLearning()}}
     }
     private var general:some View{
         Group{

@@ -6,6 +6,10 @@ import AVFoundation
 import ServiceManagement
 import CoreAudio
 
+@MainActor final class PageSelection:ObservableObject {
+    @Published var value="输入"
+}
+
 @MainActor final class AppState:ObservableObject {
     static let shared=AppState()
     let onboarding=FirstRunState()
@@ -26,7 +30,11 @@ import CoreAudio
     let meter=WaveformSignal()
     @Published var elapsed=0.0
     @Published var notice=""
-    @Published var page="输入"
+    let navigation=PageSelection()
+    var page:String {
+        get{navigation.value}
+        set{if navigation.value != newValue{navigation.value=newValue}}
+    }
     @Published var microphones:[MicrophoneChoice]=[]
     @Published var shortcutError=""
     @Published var latest:UUID?
