@@ -12,7 +12,7 @@ import Foundation
     var onCheckpoint:((String,[String:Any])->Void)?
     var onStatus:((String)->Void)?
     var ready=false
-    func start() throws {
+    func start(prewarm: Bool = true) throws {
         if process?.isRunning == true { return }
         guard let resources=Bundle.main.resourceURL else { throw AppError.message("缺少运行资源。") }
         let engine=resources.appendingPathComponent("Engine")
@@ -43,11 +43,14 @@ import Foundation
             self?.onStatus?("引擎已停止，可重新启动")
         } }
         try p.run();process=p;input=stdin.fileHandleForWriting
-        // Queue before any real job, including the first run immediately after launch.
-        let warm:[String:Any] = ["id":"prewarm","action":"prewarm","models":AppPaths.models.path]
-        do {try input?.write(contentsOf:JSONSerialization.data(withJSONObject:warm)+Data([10]))}
-        catch {stop();throw error}
-        onStatus?("本地模型预热中")
+        if prewarm {
+            let warm:[String:Any] = ["id":"prewarm","action":"prewarm","models":AppPaths.models.path]
+            do {try input?.write(contentsOf:JSONSerialization.data(withJSONObject:warm)+Data([10]))}
+            catch {stop();throw error}
+            onStatus?("本地模型预热中")
+        } else {
+            onStatus?("本地引擎已启动")
+        }
     }
     private func consume(_ data:Data) {
         buffer.append(data)
@@ -70,7 +73,9 @@ import Foundation
         }
     }
     func run(_ payload:[String:Any]) async throws -> [String:Any] {
-        try start()
+        // A job that starts the engine can load the models it actually needs.
+        // Startup prewarming remains available when there is no waiting job.
+        try start(prewarm:false)
         let id=UUID().uuidString;var job=payload;job["id"]=id;job["models"]=AppPaths.models.path
         let bytes=try JSONSerialization.data(withJSONObject:job)
         return try await withCheckedThrowingContinuation { continuation in
