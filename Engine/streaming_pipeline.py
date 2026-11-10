@@ -27,9 +27,9 @@ def pretranscribe(job,model,words,recognize,cleanup_pair=None):
     mode=job.get('cleanup','none')
     if mode!='none' and raw.strip() and cleanup_pair is not None:
         from cleanup_pipeline import cleanup
-        from transcript_rules import remove_thinking_tail
+        from transcript_rules import remove_thinking_tail,withdrawn_tail_prefix
         before=time.monotonic()
-        if remove_thinking_tail(raw)[1]:
+        if remove_thinking_tail(raw)[1] or withdrawn_tail_prefix(raw):
             # A pause is not the end of the message. Keep this cue until the
             # full transcript can distinguish thinking + new facts from finish.
             cleaned=raw
@@ -74,15 +74,16 @@ def assemble(job,native,sr,words):
         mode=job.get('cleanup','none')
         if mode!='none' and all(p.get('mode')==mode and (p.get('cleaned') is not None or not p['raw'].strip())for p in parts):
             from cleanup_pipeline import validate,repair_connective_starts,light_format
-            from transcript_rules import prepare_transcript
+            from transcript_rules import prepare_transcript,withdrawn_tail_prefix
             # A later correction may revoke an earlier chunk. Always edit the full source.
             cross_correction=re.search(r'(?<!对)不对(?!的|吗|[？?])|说错|改成|改为|更正|作废|算了|sorry|actually|I mean',result,re.I)
             candidate=''.join(((' ' if i and p.get('cleaned','') and p['cleaned'][:1].isascii() else '')+(p.get('cleaned') or ''))for i,p in enumerate(parts))
             candidate,preparation=prepare_transcript(candidate);candidate=light_format(repair_connective_starts(candidate))
             prepared,_=prepare_transcript(result);prepared=repair_connective_starts(prepared)
             accepted,reason=validate(prepared,candidate,words)
-            output['cleanup_reuse_reason']='cross_chunk_correction' if cross_correction else reason
-            if accepted and not cross_correction:
+            withdrawn_tail=withdrawn_tail_prefix(prepared)
+            output['cleanup_reuse_reason']='cross_chunk_correction' if cross_correction else 'withdrawn_tail_needs_full_context' if withdrawn_tail else reason
+            if accepted and not cross_correction and not withdrawn_tail:
                 output['cleaned']=candidate
                 output['cleanup']=dict(accepted=True,used_model=any(p.get('cleanup',{}).get('used_model')for p in parts),reason='globally_validated_background_cleanup',reused_chunks=len(parts),background_seconds=sum(p.get('cleanup_seconds',0)for p in parts),preparation=preparation)
         return output,'verified_exact_pcm_coverage'

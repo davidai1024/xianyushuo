@@ -65,6 +65,30 @@ class SpeakMorePromptTests(unittest.TestCase):
  def test_dictionary_relevance_checks_every_term_with_latin_boundaries(self):
   words=['C','cache','design.md']+['term'+str(i)for i in range(128)]
   self.assertEqual(c.matching_hints('请检查 design.md，清理 cache，保留 term127。',words),['cache','design.md','term127'])
+ def test_model_confirms_bounded_withdrawal_without_rewriting_body(self):
+  body='我们不需要改设计稿。可以用 PNG 吗？'
+  for prefix in [body,body+'\n'+('保留确认过的条款和历史信息。'*40)]:
+   text=prefix+'然后呢，我想问你。没什么。'
+   with self.subTest(length=len(text)):
+    output,meta,tokenizer,calls=self.run_stub(text,'1',['PNG'])
+    self.assertEqual(output,prefix);self.assertEqual(calls,1)
+    self.assertEqual(meta['reason'],'withdrawn_tail_removed')
+    self.assertIn('没什么',tokenizer.messages[-1]['content'])
+ def test_withdrawal_needs_model_approval_and_a_bounded_tail(self):
+  source='封面可以换颜色。然后我建议你。没什么。'
+  output,meta,_,calls=self.run_stub(source,'0')
+  self.assertEqual(output,source);self.assertNotEqual(meta['reason'],'withdrawn_tail_removed')
+  self.assertEqual(calls,2)
+  for text in ['封面可以换颜色。我建议你先看一遍。没什么。',
+               '封面可以换颜色。然后我建议你。没什么问题，照常上线。',
+               '还有别的问题吗？没什么。',
+               '请保留“然后我建议你。没什么。”这段。',
+               '请记录这段话。他回答。然后我想问你。没什么。']:
+   with self.subTest(text=text):
+    self.assertIsNone(c.withdrawn_tail_prefix(text))
+    output,meta,_,_=self.run_stub(text,'1')
+    self.assertNotEqual(meta['reason'],'withdrawn_tail_removed')
+    self.assertIn('没什么',output)
  def test_remaining_stutter_uses_one_legacy_grammar_call(self):
   for text in ['请画一个九宫九宫格。','请在后后后面加上说明。','请准备一张这个封面。','请检查这个这个标题。']:
    self.assertTrue(c.needs_grammar_repair(text))

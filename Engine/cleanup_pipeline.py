@@ -6,8 +6,8 @@ import mlx.core as mx
 import mlx_lm
 from mlx_lm.models.cache import make_prompt_cache,can_trim_prompt_cache,trim_prompt_cache
 from mlx_lm.sample_utils import make_sampler
-from transcript_rules import prepare_transcript,DISCUSSION,protected
-from cleanup_prompts import SYSTEM as SPEAKMORE_SYSTEM, EXAMPLES as SPEAKMORE_EXAMPLES, GRAMMAR_SYSTEM, GRAMMAR_EXAMPLES, user_text as polish_user_text, PROMPT_REVISION, UPSTREAM_REVISION
+from transcript_rules import prepare_transcript,DISCUSSION,protected,withdrawn_tail_prefix
+from cleanup_prompts import SYSTEM as SPEAKMORE_SYSTEM, EXAMPLES as SPEAKMORE_EXAMPLES, GRAMMAR_SYSTEM, GRAMMAR_EXAMPLES, user_text as polish_user_text, PROMPT_REVISION, UPSTREAM_REVISION, WITHDRAWN_TAIL_SYSTEM
 
 LATIN=re.compile(r"[A-Za-z]+(?:['’-][A-Za-z]+)*")
 NEG=re.compile(r'不是|不要|不能|不得|没有|不|没|未|无|别')
@@ -51,7 +51,7 @@ LEXICAL_REDUPLICATIONS=('看看','试试','想想','听听','说说','讲讲','�
 def should_bypass(raw):
     raw,_=prepare_transcript(raw)
     if DISCUSSION.search(raw):return True
-    if repair_connective_starts(raw)!=raw:return False
+    if withdrawn_tail_prefix(raw) or repair_connective_starts(raw)!=raw:return False
     plain=norm(raw)
     if len(plain)<=3:return True
     if not re.search(r'[\u3400-\u9fff]',raw)and len(LATIN.findall(raw))<=3:return True
@@ -401,10 +401,28 @@ def already_formatted_passage(text):
     questions=len(re.findall(r'为什么|怎么|如何|是不是|有没有|能不能|会不会|多少|多大|什么时候|哪天|哪里|是否',text))
     return questions<=text.count('?')+text.count('？')
 
+def confirm_withdrawn_tail(pair,text,prefix):
+    """Ask the local editor for a decision, never for replacement prose."""
+    model,tokenizer=pair
+    messages=[{'role':'system','content':WITHDRAWN_TAIL_SYSTEM},
+              {'role':'user','content':text[max(0,len(prefix)-160):]}]
+    prompt=tokenizer.apply_chat_template(messages,tokenize=False,add_generation_prompt=True,enable_thinking=False)
+    decision=mlx_lm.generate(model,tokenizer,prompt=prompt,max_tokens=4,sampler=make_sampler(temp=0),verbose=False)
+    return re.fullmatch(r'1[。.]?',decision.strip()) is not None
+
 def cleanup(pair,text,hints=(),max_tokens=2048,system_prompt=None,cache_prefix=False,_segment=False):
     raw=extract_transcript(text)
     prepared,preparation=prepare_transcript(raw)
     prepared=repair_connective_starts(prepared)
+    tail_prefix=None if _segment else withdrawn_tail_prefix(prepared)
+    if tail_prefix:
+        start=time.monotonic()
+        if confirm_withdrawn_tail(pair,prepared,tail_prefix):
+            # The span is bounded by the source, and the model only approves
+            # its omission. Earlier questions, negations and literals stay intact.
+            result=tail_prefix
+            if result.endswith(('，',',','；',';')):result=result[:-1]+'。'
+            return result,{'used_model':True,'profile':'withdrawn_tail','prompt_revision':'withdrawn-tail-v1','accepted':True,'reason':'withdrawn_tail_removed','seconds':time.monotonic()-start,'input_chars':len(raw),'output_chars':len(result),'preparation':preparation,'dictionary_terms_checked':len(hints)}
     # Do not send isolated words/letters or already-short utterances to an LLM.
     if should_bypass(prepared):
         return prepared,{'used_model':False,'reason':'prepared_short_input','accepted':True,'preparation':preparation}

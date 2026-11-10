@@ -78,5 +78,12 @@ class CoverageTests(unittest.TestCase):
    with patch('cleanup_pipeline.cleanup')as cleaner:
     value=streaming_pipeline.pretranscribe(dict(audio=str(path),recording_id=self.owner,start_frame=0,frame_count=16000,sample_rate=16000,cleanup='light'),object(),self.words,lambda *a,**kw:(raw,{'segments':[]}),object())
    self.assertEqual(CACHE[value['ticket']]['cleaned'],raw);cleaner.assert_not_called()
+ def test_withdrawal_spanning_chunks_needs_full_edit(self):
+  job=self.prepare_edits()
+  CACHE[self.tickets[0]].update(raw='封面保持蓝色。然后，我想问你。',cleaned='封面保持蓝色。然后，我想问你。')
+  CACHE[self.tickets[1]].update(raw='没什么。',cleaned='没什么。')
+  result,_=assemble(job,self.audio,24000,self.words)
+  self.assertNotIn('cleaned',result)
+  self.assertEqual(result['cleanup_reuse_reason'],'withdrawn_tail_needs_full_context')
  def test_no_streaming(self):self.assertEqual(assemble({},self.audio,24000,self.words),(None,'not_requested'))
 if __name__=='__main__':unittest.main()

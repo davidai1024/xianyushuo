@@ -392,6 +392,25 @@ def remove_syllable_restarts(text):
             text=text[:m.start()]+'最'+text[m.end():];count+=len(m.group(0))-1
     return text,count
 
+REPORTING_TAIL = re.compile(r'(?:他说|她说|我说|他问|她问|问道|答道|说道|原话|回答|回应|台词|引文)[^。！？!?]{0,24}[。！？!?]?$')
+WITHDRAWN_TAIL = re.compile(
+    r'[，,。！？!?；;\n]\s*(?P<tail>'
+    r'(?:(?:嗯|呃|额|然后呢?|还有|另外|那个?|最后)[，,、。；;\s]*)*'
+    r'我(?:建议|想建议|想说|想问|想告诉|想补充|想提醒|打算|准备|觉得|希望)(?:你们?|大家)?'
+    r'[，,。；;…—\n]+\s*'
+    r'(?:(?:嗯|呃|额)[，,、\s]*)*(?:没什么(?:了)?|算了|不说了|不提了)'
+    r'[。！!…\s]*)$'
+)
+
+def withdrawn_tail_prefix(text):
+    """Bound the source span the editor may decide to omit; never edit here."""
+    match=WITHDRAWN_TAIL.search(text)
+    if not match or DISCUSSION.search(text):return None
+    if overlaps(match.start('tail'),match.end(),protected(text)):return None
+    prefix=text[:match.start('tail')].rstrip()
+    if sum(c.isalnum()for c in prefix)<4 or REPORTING_TAIL.search(prefix):return None
+    return prefix
+
 def remove_thinking_tail(text):
     """Remove a bounded dictation aside after a complete substantive sentence.
 
@@ -410,7 +429,7 @@ def remove_thinking_tail(text):
     body=text[:match.start()]+match.group('boundary')
     if sum(c.isalnum()for c in body)<12:return text,0
     if overlaps(match.start('aside'),match.end(),protected(text)):return text,0
-    if re.search(r'(?:他说|她说|我说|他问|她问|问道|答道|说道|原话|回答|回应|台词|引文)[^。！？!?]{0,24}[。！？!?]?$',body):return text,0
+    if REPORTING_TAIL.search(body):return text,0
     return body.rstrip(),1
 
 def remove_self_restarts(text):
