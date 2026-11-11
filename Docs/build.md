@@ -36,3 +36,13 @@ python3 Tools/test_delivery.py
 `Tests/` 中还有针对自有设备、安装包、历史录音与私有基准样本的独立验收脚本。这类脚本需要另行准备本地素材，不属于上述可公开复现的单元测试。
 
 每次应用变更先跑相关回归，再更新 [更新记录](../CHANGELOG.md)，提交公开文件并推送到 `origin/main`。安装包、模型和本地测试材料不进入 Git。
+
+## 打包 DMG
+
+安装并核对待发布的版本后运行以下命令。输出包含签名 DMG、SHA-256 校验和及版本说明。
+
+```bash
+python3 Tools/package_dmg.py --output /absolute/path/to/release
+```
+
+本地开发签名与 Apple Developer ID 公证的状态会记录在 release.json 中。
