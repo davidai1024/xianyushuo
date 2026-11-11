@@ -1,4 +1,4 @@
-"""点语 local-only stdio worker. No sockets, no cloud, no OpenWhispr writes."""
+"""Local dictation worker with optional DeepSeek text editing."""
 from __future__ import annotations
 import os
 os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', TOKENIZERS_PARALLELISM='false')
@@ -241,20 +241,43 @@ def process(job,progress=lambda _:None):
         send({'id':job.get('id'),'event':'checkpoint','raw':raw,'duration':duration})
     if not isinstance(raw,str) or len(raw)>32000:raise ValueError('输入过长或格式无效。')
     cleaned=raw;light_meta={'reason':'disabled','used_model':False,'accepted':True}
-    if raw.strip() and mode!='none':
+    cloud = raw.strip() and mode != 'none' and job.get('cleanup_provider') == 'deepseek'
+    cloud_succeeded = False
+    if cloud:
+        from deepseek_cleanup import edit, DeepSeekError
+        progress('正在整理')
+        before = time.monotonic()
+        try:
+            cleaned, seconds = edit(raw, mode, words, job.get('deepseek_api_key'))
+            cloud_succeeded = True
+            meta['deepseek_cleanup'] = {'model': 'deepseek-flash', 'thinking': 'disabled', 'seconds': seconds}
+            light_meta = {'reason': 'deepseek', 'used_model': True, 'accepted': True}
+        except DeepSeekError as error:
+            local_available = (Path(root) / 'Qwen3-1.7B-4bit').is_dir()
+            meta['deepseek_cleanup'] = {'reason': str(error), 'fallback': 'local' if local_available else 'raw'}
+        meta['cleanup_seconds'] = time.monotonic() - before
+    use_local = not cloud_succeeded and meta.get('deepseek_cleanup', {}).get('fallback') != 'raw'
+    if raw.strip() and mode!='none' and use_local:
         from cleanup_pipeline import cleanup,should_bypass
         progress('正在轻整理'if mode=='light'else'正在整理')
         before=time.monotonic()
-        if reused and 'cleaned' in reused:
-            cleaned,light_meta=reused['cleaned'],reused['cleanup']
-        else:cleaned,light_meta=cleanup(None if should_bypass(raw)else load('cleanup',root),raw,words,cache_prefix=True)
-        if reused:meta['cleanup_reuse']=reused.get('cleanup_reuse_reason','not_available')
-        meta['cleanup_seconds']=time.monotonic()-before
+        try:
+            if reused and 'cleaned' in reused:
+                cleaned,light_meta=reused['cleaned'],reused['cleanup']
+            else:cleaned,light_meta=cleanup(None if should_bypass(raw)else load('cleanup',root),raw,words,cache_prefix=True)
+            if reused:meta['cleanup_reuse']=reused.get('cleanup_reuse_reason','not_available')
+            meta['cleanup_seconds']=meta.get('cleanup_seconds',0)+time.monotonic()-before
+            if mode=='structured':
+                progress('正在组织段落');before=time.monotonic()
+                cleaned,meta['structure']=structure(cleaned,load('cleanup',root))
+                meta['structure_seconds']=time.monotonic()-before
+        except Exception:
+            if not cloud:
+                raise
+            cleaned=raw
+            light_meta={'reason':'local_fallback_failed','used_model':False,'accepted':False}
+            meta['deepseek_cleanup']['fallback']='raw'
     meta.update(cleanup=light_meta,cleanup_dictionary_count=len(words)if mode!='none'else 0,cleanup_dictionary_sha256=digest(words)if mode!='none'else None)
-    if raw.strip() and mode=='structured':
-        progress('正在组织段落');before=time.monotonic()
-        cleaned,meta['structure']=structure(cleaned,load('cleanup',root))
-        meta['structure_seconds']=time.monotonic()-before
     send({'id':job.get('id'),'event':'checkpoint','raw':raw,'cleaned':cleaned,'duration':duration})
     translated=''
     if job.get('translate') and cleaned.strip():

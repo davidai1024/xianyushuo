@@ -5,9 +5,9 @@
 <h1 align="center">咸鱼说 for Mac</h1>
 
 <p align="center"><strong>把想法，说出来。</strong></p>
-<p align="center">本地语音输入 · 本地整理与翻译 · Apple Silicon</p>
+<p align="center">本地语音识别 · 可选 DeepSeek 整理 · Apple Silicon</p>
 
-咸鱼说是一款免费的 macOS 菜单栏听写工具。按下右侧 Option 开始说话，再按一次结束。它在你的 Mac 上把语音转成文字，整理后尝试填入当前输入框。无需注册账号或提供 API Key。
+咸鱼说是一款免费的 macOS 菜单栏听写工具。按下右侧 Option 开始说话，再按一次结束。它在你的 Mac 上把语音转成文字，整理后尝试填入当前输入框。默认使用本地模型，无需账号或 API Key。也可在模型资源里选用 DeepSeek Flash 整理，密钥保存到 macOS 钥匙串。选择该模式时，待整理的文字会发送给 DeepSeek。
 
 <p align="center">
   <img src="Docs/screenshots/onboarding.jpg" alt="咸鱼说原生首次引导界面，内含轻整理示例" width="840">
@@ -34,10 +34,10 @@
 | 用途 | 模型 | 安装 |
 | --- | --- | --- |
 | 语音识别 | Qwen3-ASR-1.7B-8bit | 基础听写所需 |
-| 文字整理 | Qwen3-1.7B-4bit | 使用轻整理或结构化整理时下载 |
+| 文字整理 | Qwen3-1.7B-4bit | 使用本地轻整理或结构化整理时下载 |
 | 英文翻译 | Hy-MT2-1.8B-4bit | 使用直接出英文时下载 |
 
-模型下载完成后，识别、整理和翻译可离线运行。录音、文本、历史和个人词表默认存在本机的 `~/Library/Application Support/Dianyu`。模型下载和手动检查应用更新需要网络。咸鱼说自身的推理流程不上传录音或文本，填入目标应用后的数据由该应用处理。
+模型下载完成后，识别、整理和翻译可离线运行。录音、文本、历史和个人词表默认存在本机的 `~/Library/Application Support/Dianyu`。模型下载和手动检查应用更新需要网络。DeepSeek 是可选的云端整理服务，仅在选中它且启用整理时发送本次转写及其中出现的词表写法。录音、语音识别和翻译均在本机处理。填入目标应用后的数据由该应用处理。
 
 ## 源码与构建
 

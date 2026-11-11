@@ -6,8 +6,13 @@ enum CleanupMode: String, Codable, CaseIterable, Identifiable {
     case none, light, structured
     var id: String { rawValue }
     var title: String { switch self { case .none: return "不整理"; case .light: return "轻整理"; case .structured: return "结构化整理" } }
-    var detail: String { switch self { case .none: return "保留原始识别，词表仍参与识别。"; case .light: return "去口头赘词、重复和明确改口，补标点。"; case .structured: return "先轻整理，再按语义分段；不总结、不补写。" } }
+    var detail: String { switch self { case .none: return "保留原始识别，词表仍参与识别。"; case .light: return "去口头赘词、重复和明确改口，补标点。"; case .structured: return "按语义分段或编号，保留原意。" } }
 }
+enum CleanupProvider: String, Codable, CaseIterable {
+    case local, deepSeek
+    var title: String { self == .local ? "本地模型" : "DeepSeek Flash" }
+}
+
 struct KeyBinding: Codable, Equatable {
     var key: UInt32 = 61
     var modifiers: UInt32 = 0
@@ -33,6 +38,7 @@ struct KeyBinding: Codable, Equatable {
 }
 struct Preferences: Codable, Equatable {
     var cleanup: CleanupMode = .light
+    var cleanupProvider: CleanupProvider = .local
     var hideDockIcon = false
     var preserveHeadphoneControls = true
     var keepMicWarm = false
@@ -50,10 +56,11 @@ struct Preferences: Codable, Equatable {
     var updateFeed = ""
     var shortcutDefaultsVersion=2
     init(){}
-    private enum CodingKeys:String,CodingKey {case cleanup,hideDockIcon,preserveHeadphoneControls,keepMicWarm,muteWhileRecording,streamWhileRecording,holdToTalk,microphoneUID,preferBuiltIn,autoPaste,keepClipboard,launchAtLogin,dictation,translation,retentionDays,updateFeed,shortcutDefaultsVersion}
+    private enum CodingKeys:String,CodingKey {case cleanup,cleanupProvider,hideDockIcon,preserveHeadphoneControls,keepMicWarm,muteWhileRecording,streamWhileRecording,holdToTalk,microphoneUID,preferBuiltIn,autoPaste,keepClipboard,launchAtLogin,dictation,translation,retentionDays,updateFeed,shortcutDefaultsVersion}
     init(from decoder:Decoder)throws {
         self.init();let c=try decoder.container(keyedBy:CodingKeys.self)
         cleanup=CleanupMode(rawValue:try c.decodeIfPresent(String.self,forKey:.cleanup) ?? "light") ?? .light
+        cleanupProvider=CleanupProvider(rawValue:try c.decodeIfPresent(String.self,forKey:.cleanupProvider) ?? "") ?? .local
         hideDockIcon=try c.decodeIfPresent(Bool.self,forKey:.hideDockIcon) ?? hideDockIcon
         preserveHeadphoneControls=try c.decodeIfPresent(Bool.self,forKey:.preserveHeadphoneControls) ?? preserveHeadphoneControls
         keepMicWarm=try c.decodeIfPresent(Bool.self,forKey:.keepMicWarm) ?? keepMicWarm

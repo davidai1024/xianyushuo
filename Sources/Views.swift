@@ -23,7 +23,7 @@ struct RootView:View {
     private var settingsSection:String?{SettingsWorkspace.sections.contains(page) ? page:nil}
     private var title:String{page=="设置" ? "通用":page=="模型资源" ? "模型":page}
     private var subtitle:String{
-        switch page{case "设置":return "外观、输出与本地记录。";case "录音":return "选择麦克风，让每次起录更从容。";case "快捷键":return "按你的习惯，随时开始听写与翻译。";case "权限":return "管理录音与跨应用填入所需的系统授权。";case "关于":return "版本、更新与本地隐私。";case "模型资源":return "识别、整理与翻译，全部在这台 Mac 上完成。";case "统计":return "看看你用声音写下了多少内容。";case "历史":return "原音、原文与每一次结果，都可以找回。";case "个人词表":return "让常用词参与每一次识别。";default:return "在本机识别、整理，再写入当前应用。"}
+        switch page{case "设置":return "外观、输出与本地记录。";case "录音":return "选择麦克风，让每次起录更从容。";case "快捷键":return "按你的习惯，随时开始听写与翻译。";case "权限":return "管理录音与跨应用填入所需的系统授权。";case "关于":return "版本、更新与本地隐私。";case "模型资源":return "选择整理模型，管理本地识别与翻译资源。";case "统计":return "看看你用声音写下了多少内容。";case "历史":return "原音、原文与每一次结果，都可以找回。";case "个人词表":return "让常用词参与每一次识别。";default:return "把语音转成文字，再写入当前应用。"}
     }
     var body:some View{
         HStack(spacing:0){
@@ -77,7 +77,7 @@ private struct NavigationSidebar:View,Equatable {
                 ScrollView{navigationGroups}.scrollIndicators(.hidden)
             }.frame(maxHeight:.infinity,alignment:.topLeading)
             Rectangle().fill(DianyuDesign.line).frame(height:1).padding(.bottom,14)
-            HStack{Text("版本 \(DianyuDesign.version)");Spacer();HStack(spacing:5){Circle().fill(failed ? Color.orange:DianyuDesign.accent.opacity(0.65)).frame(width:4,height:4);Text(busy ? "处理中":"完全本地")}}.font(.system(size:11)).foregroundStyle(DianyuDesign.onGlassMuted).padding(.horizontal,8).padding(.bottom,8)
+            HStack{Text("版本 \(DianyuDesign.version)");Spacer();HStack(spacing:5){Circle().fill(failed ? Color.orange:DianyuDesign.accent.opacity(0.65)).frame(width:4,height:4);Text(busy ? "处理中":"随时听写")}}.font(.system(size:11)).foregroundStyle(DianyuDesign.onGlassMuted).padding(.horizontal,8).padding(.bottom,8)
         }.padding(12).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).ignoresSafeArea()
             .onReceive(app.navigation.$value){page=$0}
             .onReceive(app.$phase.map{$0=="error"}.removeDuplicates()){failed=$0}
@@ -357,6 +357,9 @@ struct ModelsPage:View {
     @ObservedObject var app:AppState
     @ObservedObject private var downloads=ModelDownloads.shared
     @UIState private var status=""
+    @UIState private var deepSeekKey=""
+    @UIState private var keySaved=false
+    @UIState private var keyStatus=""
     var body:some View{
         ScrollView{LazyVStack(alignment:.leading,spacing:24){
             VStack(alignment:.leading,spacing:10){
@@ -364,6 +367,7 @@ struct ModelsPage:View {
                 Text("应用安装包不包含模型。识别用于基础听写；整理和翻译可以单独选装，下载完成直接启用。").font(.system(size:13)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)
                 Label(app.engineStatus,systemImage:"cpu").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)
             }
+            cleanupModelCard
             PreferenceCard(title:"按需下载",detail:"模型文件由魔搭或 Hugging Face 下载到本机，语音内容不发送给下载平台。"){
                 PreferenceRow(title:"下载源",detail:"下载中可暂停，换源后继续。",symbol:"network"){
                     FlatMenuPicker(label:"模型下载源",selection:$downloads.mirror,options:[("魔搭 ModelScope",true),("Hugging Face",false)]).frame(width:170).disabled(downloads.downloading)
@@ -391,6 +395,56 @@ struct ModelsPage:View {
             if !status.isEmpty{Text(status).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)}
         }.padding(.leading,20).padding(.trailing,24).padding(.bottom,28)}
         .task(id:downloads.revision){await downloads.refreshOverview()}
+    }
+    private var cleanupModelCard: some View {
+        PreferenceCard(title:"整理模型"){
+            PreferenceRow(title:"处理方式",detail:"适用于轻整理和结构化整理。",symbol:"sparkles"){
+                FlatMenuPicker(label:"整理模型",selection:$app.store.preferences.cleanupProvider,
+                               options:CleanupProvider.allCases.map{($0.title,$0)}).frame(width:165)
+            }
+            if app.store.preferences.cleanupProvider == .deepSeek {
+                PreferenceDivider()
+                PreferenceRow(title:"DeepSeek API Key",
+                              detail:"密钥保存在钥匙串。DeepSeek 仅接收待整理的转写和其中已出现的词表写法，可能产生 API 费用。思考已关闭。",
+                              symbol:"key"){
+                    HStack(spacing:8){
+                        SecureField(keySaved ? "已保存，可输入新密钥" : "输入 API Key",text:$deepSeekKey)
+                            .textFieldStyle(.roundedBorder).frame(width:155)
+                            .accessibilityLabel("DeepSeek API Key")
+                            .onSubmit{if !deepSeekKey.isEmpty && !app.busy{saveDeepSeekKey()}}
+                        Button("保存"){saveDeepSeekKey()}.disabled(deepSeekKey.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                        if keySaved{Button("移除"){removeDeepSeekKey()}}
+                    }
+                }
+                if !keyStatus.isEmpty{
+                    Text(keyStatus).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)
+                        .fixedSize(horizontal:false,vertical:true)
+                }
+            }
+        }
+        .disabled(app.busy)
+        .task(id:app.store.preferences.cleanupProvider){
+            deepSeekKey=""
+            keyStatus=""
+            guard app.store.preferences.cleanupProvider == .deepSeek else{return}
+            do{keySaved=try DeepSeekCredential.read() != nil}
+            catch{keySaved=false;keyStatus=error.localizedDescription}
+        }
+        .onChange(of:app.store.preferences.cleanupProvider){_,_ in app.store.savePreferences()}
+    }
+    private func saveDeepSeekKey(){
+        guard !app.busy else{return}
+        do{
+            try DeepSeekCredential.save(deepSeekKey)
+            deepSeekKey="";keySaved=true;keyStatus="已保存。下一次整理生效。"
+        }catch{keyStatus=error.localizedDescription}
+    }
+    private func removeDeepSeekKey(){
+        guard !app.busy else{return}
+        do{
+            try DeepSeekCredential.remove()
+            deepSeekKey="";keySaved=false;keyStatus="已移除。"
+        }catch{keyStatus=error.localizedDescription}
     }
     @ViewBuilder private func modelRow(_ spec:ModelSpec)->some View{
         let overview=downloads.overview[spec.id]

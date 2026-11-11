@@ -226,7 +226,7 @@ struct SettingsPage:View {
             Text(updates.status).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)
             PreferenceCard(title:"使用引导"){PreferenceRow(title:"重新体验首次设置",detail:"权限、本地模型、快捷键和试说；保留现有配置。",symbol:"sparkles"){Button("开始引导"){app.startOnboarding()}}}
             PreferenceCard(title:"隐私"){
-                PreferenceRow(title:"全部在本机处理",detail:"无需账号或 API Key，不上传录音或文字。",symbol:"lock.shield"){Text("本地").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}
+                PreferenceRow(title:"本机识别与存储",detail:"录音、识别和历史保存在本机。选择 DeepSeek 整理时，待整理的文字会发往 DeepSeek。",symbol:"lock.shield"){Text(app.store.preferences.cleanupProvider.title).font(.system(size:12)).foregroundStyle(DianyuDesign.secondary)}
             }
             Text("本版使用固定本地签名，尚未完成 Apple Developer ID 公证与另一台 Mac 的安装验证。").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)
         }

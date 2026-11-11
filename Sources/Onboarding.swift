@@ -151,7 +151,7 @@ struct SetupView:View {
                 Text("轻整理示例 · 去赘词和重复，保留原意。").font(.system(size:11)).foregroundStyle(DianyuDesign.secondary)
             }}
             HStack(spacing:14){
-                card{VStack(alignment:.leading,spacing:10){badge("lock.shield",color:.purple);Text("留在本机").font(.system(size:15,weight:.semibold));Text("无需账号，录音和文字不上传。").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)}}
+                card{VStack(alignment:.leading,spacing:10){badge("lock.shield",color:.purple);Text("留在本机").font(.system(size:15,weight:.semibold));Text("默认在本机处理，无需账号。").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)}}
                 card{VStack(alignment:.leading,spacing:10){badge("arrow.down.circle",color:.orange);Text("免费使用").font(.system(size:15,weight:.semibold));Text("模型按需下载，不用就不装。").font(.system(size:12)).foregroundStyle(DianyuDesign.secondary).fixedSize(horizontal:false,vertical:true)}}
             }
         }

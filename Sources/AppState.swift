@@ -162,7 +162,8 @@ import CoreAudio
         stopPendingDelivery()
         if onboarding.visible && onboarding.step != .practice{onboarding.error="请先完成当前步骤，或选择“稍后设置”。";showOnboarding?();return}
         let practicing=practice || (onboarding.visible && onboarding.step == .practice)
-        let missing=ModelCatalog.missing(cleanup:store.preferences.cleanup,translate:translate)
+        let provider: CleanupProvider = practicing ? .local : store.preferences.cleanupProvider
+        let missing=ModelCatalog.missing(cleanup:store.preferences.cleanup,translate:translate,provider:provider)
         guard missing.isEmpty else{
             if onboarding.visible{onboarding.go(.models);onboarding.error="请先下载本次使用的模型。"}
             page="模型资源";notice="请先下载所需模型："+missing.joined(separator:"、")+"。只需基础听写时，可使用“不整理”。";showMain?();return
@@ -269,7 +270,7 @@ import CoreAudio
         guard capturing || phase=="working",let id=active,id.uuidString==segment.owner,streamingTasks[segment.index]==nil,
               let record=store.sessions.first(where:{$0.id==id})else{return}
         var payload=segment.payload;payload["action"]="asr_chunk";payload["words"]=record.words
-        payload["cleanup"]=record.cleanup.rawValue
+        payload["cleanup"]=cleanupProvider(for:record) == .deepSeek ? CleanupMode.none.rawValue : record.cleanup.rawValue
         streamingTasks[segment.index]=Task{try await engine.run(payload)}
     }
     private func checkpoint(_ value:[String:Any]){
@@ -279,6 +280,10 @@ import CoreAudio
         if let seconds=value["duration"]as?Double,seconds>0{record.duration=seconds}
         do{try store.update(record)}catch{engine.stop(reason:"阶段结果保存失败，原录音保留。");notice=error.localizedDescription}
     }
+    private func cleanupProvider(for record:SessionRecord) -> CleanupProvider {
+        record.source == "onboarding" || record.cleanup == .none ? .local : store.preferences.cleanupProvider
+    }
+
     private func run(_ original:SessionRecord,autoDeliver:Bool){
         let id=original.id
         let chunks=autoDeliver ? streamingTasks.sorted{$0.key<$1.key}.map(\.value):[]
@@ -295,6 +300,12 @@ import CoreAudio
                 guard active==id else{return}
                 if !chunks.isEmpty,tickets.count==chunks.count{payload["streaming_tickets"]=tickets;payload["recording_id"]=id.uuidString}
                 let backgroundWait=Date().timeIntervalSince(waiting)
+                if cleanupProvider(for:original) == .deepSeek {
+                    payload["cleanup_provider"]="deepseek"
+                    if let key = try? DeepSeekCredential.read() {
+                        payload["deepseek_api_key"]=key
+                    }
+                }
                 let result=try await engine.run(payload)
                 guard active==id,var record=store.sessions.first(where:{$0.id==id})else{return}
                 record.raw=result["raw"]as?String ?? record.raw;record.cleaned=result["cleaned"]as?String ?? record.raw
@@ -324,6 +335,18 @@ import CoreAudio
                 if receipt.state=="verified"{metadata["overlay_verified_hold_seconds"]=OverlayLayout.verifiedHoldSeconds;RuntimeDiagnostics.event("delivery_verified")}
                 record.metadata=String(data:try JSONSerialization.data(withJSONObject:metadata,options:[.prettyPrinted,.sortedKeys]),encoding:.utf8) ?? ""
                 record.delivery=receipt.message
+                if let cloud=metadata["deepseek_cleanup"] as? [String:Any],
+                   let fallback=cloud["fallback"] as? String {
+                    let reason=cloud["reason"] as? String
+                    let message: String
+                    switch reason {
+                    case "missing_key", "http_401": message="DeepSeek API Key 缺失或无效"
+                    case "http_402": message="DeepSeek 账户余额不足"
+                    case "http_429": message="DeepSeek 请求受限"
+                    default: message="DeepSeek 整理未完成"
+                    }
+                    record.delivery += "\n"+message+(fallback=="raw" ? "，已保留原始转写。" : "，已用本地模型整理。")
+                }
                 if receipt.state=="empty"{record.status="failed";record.error=receipt.message}
                 try store.update(record);deliveryState=receipt.state;phase=receipt.state=="empty" ? "error":"result"
                 stage=receipt.state=="verified" ? "已填入":receipt.state=="clipboard" ? "可粘贴":receipt.state=="unverified" ? "待确认":receipt.state=="empty" ? "未识别到语音":"已保存"

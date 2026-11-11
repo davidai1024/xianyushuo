@@ -170,7 +170,7 @@ enum StatusMenuAppearance {
     }
     required init?(coder:NSCoder){nil}
     func update(busy:Bool,stage:String){
-        detail.stringValue=busy ? stage:"完全本地 · 随时听写"
+        detail.stringValue=busy ? stage:"随时听写"
         dot.layer?.backgroundColor=(busy ? NSColor.systemCyan:NSColor.systemGreen).cgColor
         setAccessibilityLabel("咸鱼说 \(DianyuDesign.version) \(detail.stringValue)")
     }

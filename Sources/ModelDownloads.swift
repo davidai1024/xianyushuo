@@ -23,9 +23,9 @@ enum ModelCatalog {
             return ((try? FileManager.default.attributesOfItem(atPath:path.path)[.size])as?NSNumber)?.int64Value==file.bytes
         }
     }
-    static func missing(cleanup:CleanupMode,translate:Bool,root:URL=AppPaths.models)->[String]{
+    static func missing(cleanup:CleanupMode,translate:Bool,provider:CleanupProvider = .local,root:URL=AppPaths.models)->[String]{
         var names=["Qwen3-ASR-1.7B-8bit"]
-        if cleanup != .none{names.append("Qwen3-1.7B-4bit")}
+        if cleanup != .none && provider == .local{names.append("Qwen3-1.7B-4bit")}
         if translate{names.append("Hy-MT2-1.8B-4bit")}
         return names.filter{!installed($0,root:root)}
     }
