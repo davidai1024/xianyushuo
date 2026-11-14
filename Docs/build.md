@@ -47,3 +47,7 @@ python3 Tools/package_dmg.py --output /absolute/path/to/release
 ```
 
 本地开发签名与 Apple Developer ID 公证的状态会记录在 release.json 中。
+
+## 性能验证结果
+
+参见[识别速度与长时间闲置验证](performance.md)。长时间闲置后首次识别仍有已复现的延迟，连续识别通过不能替代闲置测试。
