@@ -50,4 +50,4 @@ python3 Tools/package_dmg.py --output /absolute/path/to/release
 
 ## 性能验证结果
 
-参见[识别速度与长时间闲置验证](performance.md)。长时间闲置后首次识别仍有已复现的延迟，连续识别通过不能替代闲置测试。
+参见[识别速度与长时间闲置验证](performance.md)，区分各版本的已知问题与验收结果。连续识别通过不能替代长时间闲置测试。

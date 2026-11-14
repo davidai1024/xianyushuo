@@ -1,7 +1,8 @@
 """Local dictation worker with optional DeepSeek text editing."""
 from __future__ import annotations
 import os
-os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', TOKENIZERS_PARALLELISM='false')
+os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', TOKENIZERS_PARALLELISM='false',
+                  MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS='1000')
 import sys, json, time, hashlib, math, re, gc, select, threading
 from pathlib import Path
 from contextlib import redirect_stdout
@@ -10,6 +11,7 @@ MODELS={}
 ASR_WARM=False
 EDITOR_WARM=False
 AUDIO_WARM=False
+MEMORY_POLICY=None
 
 def send(value):
     WIRE.write(json.dumps(value,ensure_ascii=False)+'\n');WIRE.flush()
@@ -24,11 +26,20 @@ def vocabulary(value):
 
 def digest(words):return hashlib.sha256(json.dumps(words,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
 
+def configure_memory():
+    global MEMORY_POLICY
+    if MEMORY_POLICY is None:
+        import mlx.core as mx
+        from memory_policy import configure
+        MEMORY_POLICY=configure(mx)
+    return MEMORY_POLICY
+
 def load(role,root):
     if role not in MODELS:
         names={'asr':'Qwen3-ASR-1.7B-8bit','cleanup':'Qwen3-1.7B-4bit','mt':'Hy-MT2-1.8B-4bit'}
         folder=Path(root)/names[role]
         if not folder.is_dir():raise ValueError('缺少本地模型：'+names[role])
+        configure_memory()
         if role=='asr':
             from mlx_audio.stt.utils import load as loader
         else:
@@ -241,12 +252,14 @@ def process(job,progress=lambda _:None):
 def process_chunk(job):
     from streaming_pipeline import pretranscribe
     from asr_pipeline import recognize
+    # Allocate ASR weights first so their residency takes priority over editing.
+    model=load('asr',job['models'])
     if local_editor_requested(job):
         pair=load('cleanup',job['models'])
     else:
         release_editor()
         pair=None
-    return pretranscribe(job,load('asr',job['models']),vocabulary(job.get('words',[])),recognize,pair)
+    return pretranscribe(job,model,vocabulary(job.get('words',[])),recognize,pair)
 
 def process_dictation(job,progress=lambda _:None):
     words=vocabulary(job.get('words',[]));root=job['models'];mode=job.get('cleanup','light')
@@ -326,6 +339,7 @@ def process_dictation(job,progress=lambda _:None):
         translated=mlx_lm.generate(m,t,prompt=prompt,max_tokens=min(16384,max(512,len(cleaned)*3)),sampler=make_sampler(temp=0),verbose=False).strip()
         if not translated or '<think>' in translated:raise ValueError('翻译未返回有效结果，源文已保留。')
         meta['translation_seconds']=time.monotonic()-before
+    if MEMORY_POLICY is not None:meta['memory_policy']=MEMORY_POLICY
     meta['total_seconds']=time.monotonic()-start
     return {'raw':raw,'cleaned':cleaned,'translated':translated,'output':translated if job.get('translate')else cleaned,'duration':duration,'metadata':meta}
 
