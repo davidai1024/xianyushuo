@@ -2,6 +2,7 @@ import Foundation
 
 @MainActor final class EngineClient {
     private var process:Process?
+    private var cleanupPolicy=""
     private var input:FileHandle?
     private var buffer=Data()
     private var generation=UUID()
@@ -12,7 +13,7 @@ import Foundation
     var onCheckpoint:((String,[String:Any])->Void)?
     var onStatus:((String)->Void)?
     var ready=false
-    func start(prewarm: Bool = true) throws {
+    func start(prewarm: Bool = true, cleanup: CleanupMode = .light, cleanupProvider: CleanupProvider = .local) throws {
         if process?.isRunning == true { return }
         guard let resources=Bundle.main.resourceURL else { throw AppError.message("缺少运行资源。") }
         let engine=resources.appendingPathComponent("Engine")
@@ -43,14 +44,23 @@ import Foundation
             self?.onStatus?("引擎已停止，可重新启动")
         } }
         try p.run();process=p;input=stdin.fileHandleForWriting
+        cleanupPolicy=""
         if prewarm {
-            let warm:[String:Any] = ["id":"prewarm","action":"prewarm","models":AppPaths.models.path]
+            let warm:[String:Any] = ["id":"prewarm","action":"prewarm","models":AppPaths.models.path,"cleanup":cleanup.rawValue,"cleanup_provider":cleanupProvider == .deepSeek ? "deepseek" : "local"]
             do {try input?.write(contentsOf:JSONSerialization.data(withJSONObject:warm)+Data([10]))}
             catch {stop();throw error}
             onStatus?("本地模型预热中")
         } else {
             onStatus?("本地引擎已启动")
         }
+    }
+    func configureCleanup(_ cleanup:CleanupMode,provider:CleanupProvider) throws {
+        guard process?.isRunning==true else{return}
+        let policy=cleanup.rawValue+":"+provider.rawValue
+        guard policy != cleanupPolicy else{return}
+        let job:[String:Any] = ["id":UUID().uuidString,"action":"configure_cleanup","cleanup":cleanup.rawValue,"cleanup_provider":provider == .deepSeek ? "deepseek" : "local"]
+        try input?.write(contentsOf:JSONSerialization.data(withJSONObject:job)+Data([10]))
+        cleanupPolicy=policy
     }
     private func consume(_ data:Data) {
         buffer.append(data)
@@ -61,7 +71,8 @@ import Foundation
             if event=="ready" { ready=true;continue }
             if event=="warmed" {
                 let asr=value["resident"]as?Bool ?? false,editor=value["editor_resident"]as?Bool ?? false
-                onStatus?(asr ? (editor ? "识别与整理已就绪":"识别已就绪 · 整理模型未安装"):"请先下载语音识别模型");continue
+                let editorRequested=value["editor_requested"]as?Bool ?? true
+                onStatus?(asr ? (editor ? "识别与整理已就绪":editorRequested ? "识别已就绪 · 整理模型未安装":"识别已就绪"):"请先下载语音识别模型");continue
             }
             if event=="warm_failed" {onStatus?("预热未完成，首次识别时将重试加载");continue}
             if event=="progress" { onProgress?(id,value["stage"]as?String ?? "正在处理");continue }

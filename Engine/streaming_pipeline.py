@@ -25,7 +25,7 @@ def pretranscribe(job,model,words,recognize,cleanup_pair=None):
     before=time.monotonic();raw,meta=recognize(model,mono,words,language=job.get('language'),max_redecode_seconds=0)
     asr_seconds=time.monotonic()-before;cleaned=None;clean_meta={};clean_seconds=0
     mode=job.get('cleanup','none')
-    if mode!='none' and raw.strip() and cleanup_pair is not None:
+    if mode!='none' and job.get('cleanup_provider')!='deepseek' and raw.strip() and cleanup_pair is not None:
         from cleanup_pipeline import cleanup
         from transcript_rules import remove_thinking_tail,withdrawn_tail_prefix
         before=time.monotonic()

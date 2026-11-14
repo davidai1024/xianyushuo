@@ -51,10 +51,26 @@ def warm_audio():
     resample_poly(sample,160,441)
     AUDIO_WARM=True
 
-def prewarm(root):
+def local_editor_requested(job):
+    return job.get('cleanup','light') != 'none' and job.get('cleanup_provider') != 'deepseek'
+
+def release_editor():
+    """Drop weights and their instruction caches; keep ASR ready."""
+    global EDITOR_WARM
+    editor=MODELS.pop('cleanup',None)
+    EDITOR_WARM=False
+    if editor is not None:
+        del editor
+        gc.collect()
+        import mlx.core as mx
+        mx.clear_cache()
+
+def prewarm(root, *, cleanup='light', cleanup_provider='local'):
     """Warm only installed components. First launch never downloads any weights."""
     global ASR_WARM
     start=time.monotonic()
+    editor_requested=local_editor_requested(dict(cleanup=cleanup,cleanup_provider=cleanup_provider))
+    if not editor_requested:release_editor()
     asr_available=(Path(root)/'Qwen3-ASR-1.7B-8bit').is_dir()
     editor_available=(Path(root)/'Qwen3-1.7B-4bit').is_dir()
     if asr_available:warm_audio()
@@ -63,8 +79,8 @@ def prewarm(root):
         model=load('asr',root)
         model.generate(np.zeros(16000,dtype=np.float32),hotwords=[],max_tokens=8,temperature=0,verbose=False)
         ASR_WARM=True
-    if editor_available:warm_editor(root)
-    return {'seconds':time.monotonic()-start,'resident':asr_available and ASR_WARM,'editor_resident':editor_available and EDITOR_WARM,'audio_resident':asr_available and AUDIO_WARM}
+    if editor_requested and editor_available:warm_editor(root)
+    return {'seconds':time.monotonic()-start,'resident':asr_available and ASR_WARM,'editor_resident':editor_available and EDITOR_WARM,'editor_requested':editor_requested,'audio_resident':asr_available and AUDIO_WARM}
 
 def warm_editor(root):
     """Compile fixed editor instructions off the stop-to-result path, with no user text."""
@@ -75,7 +91,8 @@ def warm_editor(root):
     EDITOR_WARM=True
 
 def release_idle_models():
-    # Dictation's two models stay ready; only the optional translation model is reclaimed.
+    # Keep permitted dictation models ready; cloud/disabled policy releases the editor.
+    # The optional translation model is reclaimed on idle.
     for role in list(MODELS):
         if role not in ('asr','cleanup'):del MODELS[role]
     gc.collect()
@@ -212,6 +229,26 @@ def structure(text,pair):
     return output,{'reason':reason,'accepted':reason!='unsafe_layout_rejected','used_model':used_model,'paragraphs':len(exact),'list':False}
 
 def process(job,progress=lambda _:None):
+    keep_editor=local_editor_requested(job)
+    if not keep_editor:release_editor()
+    try:
+        return process_dictation(job,progress)
+    finally:
+        # A failed cloud request can load the local fallback. Release it even
+        # when editing/translation fails, after the callee's references unwind.
+        if not keep_editor:release_editor()
+
+def process_chunk(job):
+    from streaming_pipeline import pretranscribe
+    from asr_pipeline import recognize
+    if local_editor_requested(job):
+        pair=load('cleanup',job['models'])
+    else:
+        release_editor()
+        pair=None
+    return pretranscribe(job,load('asr',job['models']),vocabulary(job.get('words',[])),recognize,pair)
+
+def process_dictation(job,progress=lambda _:None):
     words=vocabulary(job.get('words',[]));root=job['models'];mode=job.get('cleanup','light')
     if mode not in ('none','light','structured'):raise ValueError('未知整理档位。')
     meta={'dictionary_count':len(words),'dictionary_sha256':digest(words),'cleanup_mode':mode,'engine_version':1}
@@ -327,14 +364,14 @@ def main():
             job=json.loads(line)
             # All library diagnostics go to stderr, never contaminate protocol stdout.
             with redirect_stdout(sys.stderr):
+                if job.get('action')=='configure_cleanup':
+                    if not local_editor_requested(job):release_editor()
+                    send({'id':job['id'],'event':'configured'});continue
                 if job.get('action')=='prewarm':
-                    result=prewarm(job['models'])
+                    result=prewarm(job['models'],cleanup=job.get('cleanup','light'),cleanup_provider=job.get('cleanup_provider','local'))
                     send({'id':job['id'],'event':'warmed',**result});continue
                 if job.get('action')=='asr_chunk':
-                    from streaming_pipeline import pretranscribe
-                    from asr_pipeline import recognize
-                    pair=load('cleanup',job['models'])if job.get('cleanup','none')!='none'else None
-                    result=pretranscribe(job,load('asr',job['models']),vocabulary(job.get('words',[])),recognize,pair)
+                    result=process_chunk(job)
                     send({'id':job['id'],'event':'result',**result});continue
                 try:result=process(job,lambda stage:send({'id':job['id'],'event':'progress','stage':stage}))
                 finally:

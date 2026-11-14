@@ -31,6 +31,7 @@ python3 Tools/build.py --compile-only --version 0.1.46 --build 90
 ```sh
 PYTHONPATH="$PWD/build/PythonExtras" build/Runtime/bin/python3 -B -m unittest discover -s Tests -p 'test_*.py'
 python3 Tools/test_delivery.py
+python3 Tools/test_engine_cleanup.py
 ```
 
 `Tests/` 中还有针对自有设备、安装包、历史录音与私有基准样本的独立验收脚本。这类脚本需要另行准备本地素材，不属于上述可公开复现的单元测试。

@@ -122,7 +122,7 @@ import CoreAudio
         if let record=store.sessions.first(where:{$0.status=="interrupted"}){latest=record.id;notice="有上次中断的任务，可在历史中恢复。"}
     }
     func startServices(){
-        do{try engine.start()}catch{engineStatus=error.localizedDescription}
+        do{try engine.start(cleanup:store.preferences.cleanup,cleanupProvider:store.preferences.cleanupProvider)}catch{engineStatus=error.localizedDescription}
         if !servicesStarted {
             servicesStarted=true
             // First launch must return to the app run loop before CoreAudio starts pulling.
@@ -130,6 +130,7 @@ import CoreAudio
         }
     }
     func applyPreferences(){
+        do{try engine.configureCleanup(store.preferences.cleanup,provider:store.preferences.cleanupProvider)}catch{engineStatus=error.localizedDescription}
         store.savePreferences();updateDockVisibility?(store.preferences.hideDockIcon);hotkeys.standaloneHold=store.preferences.holdToTalk;hotkeys.configure(store.preferences.dictation,store.preferences.translation);shortcutError=hotkeys.errors.joined(separator:"\n")
         if servicesStarted && !busy && !sleeping {
             warmToken+=1;let token=warmToken
@@ -270,7 +271,8 @@ import CoreAudio
         guard capturing || phase=="working",let id=active,id.uuidString==segment.owner,streamingTasks[segment.index]==nil,
               let record=store.sessions.first(where:{$0.id==id})else{return}
         var payload=segment.payload;payload["action"]="asr_chunk";payload["words"]=record.words
-        payload["cleanup"]=cleanupProvider(for:record) == .deepSeek ? CleanupMode.none.rawValue : record.cleanup.rawValue
+        payload["cleanup"]=record.cleanup.rawValue
+        payload["cleanup_provider"]=cleanupProvider(for:record) == .deepSeek ? "deepseek" : "local"
         streamingTasks[segment.index]=Task{try await engine.run(payload)}
     }
     private func checkpoint(_ value:[String:Any]){
