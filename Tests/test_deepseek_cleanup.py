@@ -70,5 +70,30 @@ class DeepSeekCleanupTests(unittest.TestCase):
         edit.assert_not_called()
 
 
+
+    @patch.object(deepseek_cleanup, 'edit', return_value=('设施。', 0.01))
+    def test_lone_english_word_is_not_translated(self, edit):
+        self.job['text'] = 'Facilities.'
+        result = worker.process(self.job)
+        self.assertEqual(result['output'], 'Facilities.')
+        self.assertEqual(result['metadata']['cleanup']['reason'], 'english_changed')
+        self.assertFalse(result['metadata']['cleanup']['accepted'])
+        self.assertEqual(result['metadata']['deepseek_cleanup']['rejected'], 'english_changed')
+        edit.assert_called_once()
+
+    @patch.object(deepseek_cleanup, 'edit', return_value=('打开设施页面。', 0.01))
+    def test_mixed_sentence_keeps_english_when_cloud_translates_it(self, edit):
+        self.job['text'] = '嗯，打开 Facilities 页面。'
+        result = worker.process(self.job)
+        self.assertEqual(result['output'], self.job['text'])
+        self.assertEqual(result['metadata']['cleanup']['fallback'], 'raw')
+
+    @patch.object(deepseek_cleanup, 'edit', return_value=('Facilities。', 0.01))
+    def test_english_punctuation_can_still_be_normalized(self, edit):
+        self.job['text'] = 'Facilities.'
+        result = worker.process(self.job)
+        self.assertEqual(result['output'], 'Facilities。')
+        self.assertTrue(result['metadata']['cleanup']['accepted'])
+
 if __name__ == '__main__':
     unittest.main()

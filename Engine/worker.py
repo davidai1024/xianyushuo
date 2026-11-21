@@ -294,14 +294,21 @@ def process_dictation(job,progress=lambda _:None):
     cloud = raw.strip() and mode != 'none' and job.get('cleanup_provider') == 'deepseek'
     cloud_succeeded = False
     if cloud:
-        from deepseek_cleanup import edit, DeepSeekError
+        from deepseek_cleanup import edit, DeepSeekError, preserves_english
         progress('正在整理')
         before = time.monotonic()
         try:
             cleaned, seconds = edit(raw, mode, words, job.get('deepseek_api_key'))
             cloud_succeeded = True
             meta['deepseek_cleanup'] = {'model': 'deepseek-flash', 'thinking': 'disabled', 'seconds': seconds}
-            light_meta = {'reason': 'deepseek', 'used_model': True, 'accepted': True}
+            if preserves_english(raw, cleaned):
+                light_meta = {'reason': 'deepseek', 'used_model': True, 'accepted': True}
+            else:
+                # The cloud editor is Chinese-oriented and sometimes translates a
+                # lone English word. Keep the transcript instead of pasting that.
+                cleaned = raw
+                light_meta = {'reason': 'english_changed', 'used_model': True, 'accepted': False, 'fallback': 'raw'}
+                meta['deepseek_cleanup']['rejected'] = 'english_changed'
         except DeepSeekError as error:
             local_available = (Path(root) / 'Qwen3-1.7B-4bit').is_dir()
             meta['deepseek_cleanup'] = {'reason': str(error), 'fallback': 'local' if local_available else 'raw'}
